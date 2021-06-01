@@ -11,7 +11,7 @@ model = dict(
         ape=False,
         drop_path_rate=0.3,
         patch_norm=True,
-        use_checkpoint=False
+        use_checkpoint='./checkpoints/swin_tiny_patch4_window7_224.pth'
     ),
     decode_head=dict(
         in_channels=[96, 192, 384, 768],

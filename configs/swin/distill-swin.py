@@ -1,6 +1,6 @@
 norm_cfg = dict(type='BN', requires_grad=True)
 _base_ = [
-    '../_base_/datasets/ade20k.py.py',
+    '../_base_/datasets/ade20k.py',
     '../_base_/default_runtime.py',
     '../_base_/schedules/schedule_20k.py'
 ]
@@ -120,8 +120,7 @@ lr_config = dict(_delete_=True, policy='poly',
 
 
 data = dict(
-    samples_per_gpu=16,
-    workers_per_gpu=16,
+    samples_per_gpu=8,
 )
 
 distillation = dict(
