@@ -55,6 +55,7 @@ def train_segmentor(model,
     ]
 
     # build runner
+    print(model)
     optimizer = build_optimizer(model, cfg.optimizer)
 
     # put model on gpus

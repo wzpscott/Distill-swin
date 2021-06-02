@@ -63,16 +63,16 @@ def parse_args():
 
 def main():
     args = parse_args()
-    cfg_T = Config.fromfile(args.config_T)
+    cfg_T_ = Config.fromfile(args.config_T)
     cfg = Config.fromfile(args.config)
 
     import copy
-    # cfg_T = copy.deepcopy(cfg)
-    cfg_T['checkpoint'] = cfg_T['checkpoint_T']
-    cfg_T['model'] = cfg_T['model_T']
-    cfg_T['train_cfg'] = cfg_T['train_cfg_T']
-    cfg_T['test_cfg'] = cfg_T['test_cfg_T']
-    cfg_T['distillation'] = cfg_T['distillation_T']
+    cfg_T = copy.deepcopy(cfg)
+    cfg_T['checkpoint'] = cfg_T_['checkpoint_T']
+    cfg_T['model'] = cfg_T_['model_T']
+    cfg_T['train_cfg'] = cfg_T_['train_cfg_T']
+    cfg_T['test_cfg'] = cfg_T_['test_cfg_T']
+    cfg_T['distillation'] = cfg_T_['distillation_T']
 
     if args.options is not None:
         cfg.merge_from_dict(args.options)
@@ -143,7 +143,8 @@ def main():
 
     EXT_S = FeatureExtractor(model_s, cfg, feat={})
     EXT_T = FeatureExtractor(model_t, cfg_T, feat={})
-    model = Sd_model(cfg, cfg_T, model_s, model_t, EXT_S, EXT_T)
+    # model = Sd_model(cfg, cfg_T, model_s, model_t, EXT_S, EXT_T)
+    model = Sd_model(cfg, cfg_T, model_s, EXT_S, EXT_T)
 
     logger.info(model)
 
@@ -161,8 +162,8 @@ def main():
             CLASSES=datasets[0].CLASSES,
             PALETTE=datasets[0].PALETTE)
     # add an attribute for visualization convenience
-    print(model)
     model.CLASSES = datasets[0].CLASSES
+
     train_segmentor(
         model,
         datasets,
