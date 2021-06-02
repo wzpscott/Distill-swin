@@ -12,9 +12,8 @@ class FeatureExtractor(nn.Module):
         if 'off' not in cfg.distillation['fea']['type']:
             self.extracted_layers.append(cfg.distillation['fea']['location'])
         self.feat = feat
-        sub_modules = self.submodule.named_modules()  #
+        sub_modules = self.submodule.named_modules()  
         for name, module in sub_modules:
-            print(name)
             if name in self.extracted_layers:
                 module.register_forward_hook(partial(self.hook_fn_forward, name=name))
 

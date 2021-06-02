@@ -54,6 +54,9 @@ def train_segmentor(model,
             drop_last=True) for ds in dataset
     ]
 
+    # build runner
+    optimizer = build_optimizer(model, cfg.optimizer)
+
     # put model on gpus
     if distributed:
         find_unused_parameters = cfg.get('find_unused_parameters', False)
@@ -68,8 +71,8 @@ def train_segmentor(model,
         model = MMDataParallel(
             model.cuda(cfg.gpu_ids[0]), device_ids=cfg.gpu_ids)
 
-    # build runner
-    optimizer = build_optimizer(model, cfg.optimizer)
+    # # build runner
+    # optimizer = build_optimizer(model, cfg.optimizer)
 
     if cfg.get('runner') is None:
         cfg.runner = {'type': 'IterBasedRunner', 'max_iters': cfg.total_iters}

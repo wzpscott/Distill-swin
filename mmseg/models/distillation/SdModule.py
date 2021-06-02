@@ -32,6 +32,7 @@ class Sd_model(nn.Module):
         preds_mask = []
         softs_fea = []
         preds_fea = []
+
         for k in self.t_fea.feat:
             if 'logits' in k:
                 ##apply distillation on the cls logits map
