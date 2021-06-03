@@ -124,7 +124,7 @@ def main():
 
     # log some basic info
     logger.info(f'Distributed training: {distributed}')
-    logger.info(f'Config:\n{cfg.pretty_text}')
+    # logger.info(f'Config:\n{cfg.pretty_text}')
 
     # set random seeds
     if args.seed is not None:
@@ -141,12 +141,14 @@ def main():
     model_t = build_segmentor(
         cfg_T.model, train_cfg=cfg_T.train_cfg, test_cfg=cfg_T.test_cfg)
 
+
+
     EXT_S = FeatureExtractor(model_s, cfg, feat={})
     EXT_T = FeatureExtractor(model_t, cfg_T, feat={})
-    # model = Sd_model(cfg, cfg_T, model_s, model_t, EXT_S, EXT_T)
-    model = Sd_model(cfg, cfg_T, model_s, EXT_S, EXT_T)
+    model = Sd_model(cfg, cfg_T, model_s, model_t, EXT_S, EXT_T)
 
-    logger.info(model)
+
+    # logger.info(model)
 
     datasets = [build_dataset(cfg.data.train)]
     if len(cfg.workflow) == 2:

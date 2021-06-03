@@ -2,6 +2,26 @@ from functools import partial
 from .losses import *
 
 
+# class FeatureExtractor(nn.Module):
+#     def __init__(self, submodule, cfg, feat):
+#         super(FeatureExtractor, self).__init__()
+#         self.submodule = submodule
+#         self.extracted_layers = []
+#         if 'off' not in cfg.distillation['logits']['type']:
+#             self.extracted_layers.append(cfg.distillation['logits']['location'])
+#         if 'off' not in cfg.distillation['fea']['type']:
+#             self.extracted_layers.append(cfg.distillation['fea']['location'])
+#         self.feat = feat
+#         sub_modules = self.submodule.named_modules()  
+#         for name, module in sub_modules:
+#             if name in self.extracted_layers:
+#                 module.register_forward_hook(partial(self.hook_fn_forward, name=name))
+
+#     def hook_fn_forward(self, module, input, output, name):
+#         if name not in self.feat:
+#             self.feat[name] = []
+#         if self.training == True:
+#             self.feat[name].append(output)
 class FeatureExtractor(nn.Module):
     def __init__(self, submodule, cfg, feat):
         super(FeatureExtractor, self).__init__()
@@ -12,7 +32,7 @@ class FeatureExtractor(nn.Module):
         if 'off' not in cfg.distillation['fea']['type']:
             self.extracted_layers.append(cfg.distillation['fea']['location'])
         self.feat = feat
-        sub_modules = self.submodule.named_modules()  
+        sub_modules = submodule.named_modules()  
         for name, module in sub_modules:
             if name in self.extracted_layers:
                 module.register_forward_hook(partial(self.hook_fn_forward, name=name))
@@ -85,4 +105,5 @@ class DistillationLoss(nn.Module):
                 loss = loss + lambda_['CA'] * self.ca_loss(pred[i], soft[i])
             # print('CA_' + name, '|', sd_mode)
             sd_loss.update({'loss_'+'CA_' + name: loss})
+        
         return sd_loss

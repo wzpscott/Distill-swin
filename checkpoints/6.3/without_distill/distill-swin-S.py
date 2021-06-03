@@ -38,7 +38,7 @@ test_pipeline = [
         ])
 ]
 data = dict(
-    samples_per_gpu=8,
+    samples_per_gpu=1,
     workers_per_gpu=4,
     train=dict(
         type='ADE20KDataset',
@@ -107,40 +107,23 @@ data = dict(
                     dict(type='Collect', keys=['img'])
                 ])
         ]))
-log_config = dict(interval=10, hooks=[dict(type='TensorboardLoggerHook')])
+log_config = dict(interval=50, hooks=[dict(type='TensorboardLoggerHook')])
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
 load_from = None
 resume_from = None
 workflow = [('train', 1)]
 cudnn_benchmark = True
-optimizer = dict(
-    type='AdamW',
-    lr=6e-05,
-    betas=(0.9, 0.999),
-    weight_decay=0.01,
-    paramwise_cfg=dict(
-        custom_keys=dict(
-            absolute_pos_embed=dict(decay_mult=0.0),
-            relative_position_bias_table=dict(decay_mult=0.0),
-            norm=dict(decay_mult=0.0))))
+optimizer = dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0005)
 optimizer_config = dict()
-lr_config = dict(
-    policy='poly',
-    warmup='linear',
-    warmup_iters=1500,
-    warmup_ratio=1e-06,
-    power=1.0,
-    min_lr=0.0,
-    by_epoch=False)
+lr_config = dict(policy='poly', power=0.9, min_lr=0.0001, by_epoch=False)
 runner = dict(type='IterBasedRunner', max_iters=20000)
 checkpoint_config = dict(by_epoch=False, interval=2000)
 evaluation = dict(interval=2000, metric='mIoU')
 norm_cfg = dict(type='BN', requires_grad=True)
-work_dir = './checkpoints/5.30_distill/'
+work_dir = './checkpoints/6.3/without_distill'
 model = dict(
     type='EncoderDecoder',
-    pretrained='./checkpoints/swin_tiny_patch4_window7_224.pth',
     backbone=dict(
         type='SwinTransformer',
         embed_dim=96,
@@ -177,7 +160,7 @@ model = dict(
         num_convs=1,
         concat_input=False,
         dropout_ratio=0.1,
-        num_classes=19,
+        num_classes=150,
         norm_cfg=dict(type='BN', requires_grad=True),
         align_corners=False,
         loss_decode=dict(
@@ -185,6 +168,13 @@ model = dict(
 train_cfg = ({}, )
 test_cfg = dict(mode='whole')
 distillation = dict(
-    logits=dict(type='percep', location='decode_head.conv_seg'),
-    fea=dict(type='off', location=''))
+    logits=dict(
+        type='CA',
+        location='decode_head.conv_seg',
+        lambda_=dict(KD=0.0, SD=0.0, CA=0.0)),
+    fea=dict(
+        type='SD',
+        location='decode_head.bottleneck.activate',
+        lambda_=dict(KD=0.0, SD=0.0)),
+    mask=dict())
 gpu_ids = range(0, 1)

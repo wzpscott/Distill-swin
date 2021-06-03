@@ -5,16 +5,16 @@ _base_ = [
     '../_base_/schedules/schedule_20k.py'
 ]
 log_config = dict(  
-    interval=10, 
+    interval=50, 
     hooks=[
         dict(type='TensorboardLoggerHook') 
         # dict(type='TextLoggerHook')
     ])
-work_dir = './checkpoints/5.30_distill/'
+work_dir = './checkpoints/6.3/without_distill'
 
 model =  dict(
     type='EncoderDecoder',
-    pretrained='./checkpoints/swin_tiny_patch4_window7_224.pth',
+    # pretrained='./checkpoints/swin_tiny_patch4_window7_224.pth',
     backbone=dict(
         type='SwinTransformer',
         embed_dim=96,
@@ -51,7 +51,7 @@ model =  dict(
         num_convs=1,
         concat_input=False,
         dropout_ratio=0.1,
-        num_classes=19,
+        num_classes=150,
         norm_cfg=norm_cfg,
         align_corners=False,
         loss_decode=dict(
@@ -60,28 +60,24 @@ model =  dict(
 train_cfg=dict(),
 test_cfg=dict(mode='whole')
 
-optimizer = dict(_delete_=True, type='AdamW', lr=0.00006, betas=(0.9, 0.999), weight_decay=0.01,
-                 paramwise_cfg=dict(custom_keys={'absolute_pos_embed': dict(decay_mult=0.),
-                                                 'relative_position_bias_table': dict(decay_mult=0.),
-                                                 'norm': dict(decay_mult=0.)}))
+# optimizer = dict(_delete_=True, type='AdamW', lr=0.00006, betas=(0.9, 0.999), weight_decay=0.01,
+#                  paramwise_cfg=dict(custom_keys={'absolute_pos_embed': dict(decay_mult=0.),
+#                                                  'relative_position_bias_table': dict(decay_mult=0.),
+#                                                  'norm': dict(decay_mult=0.)}))
 
-lr_config = dict(_delete_=True, policy='poly',
-                 warmup='linear',
-                 warmup_iters=1500,
-                 warmup_ratio=1e-6,
-                 power=1.0, min_lr=0.0, by_epoch=False)
+# lr_config = dict(_delete_=True, policy='poly',
+#                  warmup='linear',
+#                  warmup_iters=1500,
+#                  warmup_ratio=1e-6,
+#                  power=1.0, min_lr=0.0, by_epoch=False)
 
 
 data = dict(
-    samples_per_gpu=8,
+    samples_per_gpu=1,
 )
 
-# distillation = dict(
-#     logits=dict(type='CA', location='decode_head.conv_seg', lambda_=dict(KD=0.0, SD=0.0, CA=0.0)),
-#     fea=dict(type='off_SD', location='decode_head.bottleneck.activate', lambda_=dict(KD=1.0, SD=1.0)),
-#     )
-# distillation = dict(
-#     logits=dict(type='off_CA', location='decode_head.conv_seg', lambda_=dict()),
-#     fea=dict(type='off_SD', location='decode_head.bottleneck.activate', lambda_=dict()),
-#     )
-distillation = dict(logits=dict(type='percep', location='decode_head.conv_seg'), fea=dict(type='off', location=''))
+distillation = dict(
+    logits=dict(type='CA', location='decode_head.conv_seg', lambda_=dict(KD=0.0, SD=0.0, CA=0.0)),
+    fea=dict(type='SD', location='decode_head.bottleneck.activate', lambda_=dict(KD=0.0, SD=0.0)),
+    mask=dict()
+)

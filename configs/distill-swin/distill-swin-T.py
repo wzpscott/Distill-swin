@@ -7,13 +7,14 @@ _base_ = [
 log_config = dict(  
     interval=10, 
     hooks=[
-        dict(type='TensorboardLoggerHook') 
-        # dict(type='TextLoggerHook')
+        # dict(type='TensorboardLoggerHook') 
+        dict(type='TextLoggerHook')
     ])
-work_dir = './checkpoints/5.30_distill/'
+work_dir = './checkpoints/6.3_distill/'
 
 
 checkpoint_T = './checkpoints/upernet_swin_base_patch4_window7_512x512.pth'
+
 model_T =  dict(
     type='EncoderDecoder',
     pretrained=None,
@@ -47,13 +48,13 @@ model_T =  dict(
             type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0)),
     auxiliary_head=dict(
         type='FCNHead',
-        in_channels=384,
+        in_channels=512,
         in_index=2,
         channels=256,
         num_convs=1,
         concat_input=False,
         dropout_ratio=0.1,
-        num_classes=19,
+        num_classes=150,
         norm_cfg=norm_cfg,
         align_corners=False,
         loss_decode=dict(
@@ -63,11 +64,12 @@ train_cfg_T=dict(),
 test_cfg_T=dict(mode='whole')
 
 
-# distillation_T = dict(
-#     logits=dict(type='CA', location='decode_head.conv_seg', lambda_=dict(KD=0.0, SD=0.0, CA=0.0)),
-#     fea=dict(type='off_SD', location='decode_head.bottleneck.activate', lambda_=dict(KD=1.0, SD=1.0)),
-# )
-distillation_T = dict(logits=dict(type='percep', location='decode_head.conv_seg'), fea=dict(type='off', location=''))
+distillation_T = dict(
+    logits=dict(type='CA', location='decode_head.conv_seg', lambda_=dict(KD=0.0, SD=0.0, CA=0.0)),
+    fea=dict(type='off_SD', location='decode_head.bottleneck.activate', lambda_=dict(KD=1.0, SD=1.0)),
+    mask=dict()
+)
+
 
 # optimizer = dict(_delete_=True, type='AdamW', lr=0.00006, betas=(0.9, 0.999), weight_decay=0.01,
 #                  paramwise_cfg=dict(custom_keys={'absolute_pos_embed': dict(decay_mult=0.),
@@ -75,11 +77,11 @@ distillation_T = dict(logits=dict(type='percep', location='decode_head.conv_seg'
 #                                                  'norm': dict(decay_mult=0.)}))
 
 
-lr_config = dict(_delete_=True, policy='poly',
-                 warmup='linear',
-                 warmup_iters=1500,
-                 warmup_ratio=1e-6,
-                 power=1.0, min_lr=0.0, by_epoch=False)
+# lr_config = dict(_delete_=True, policy='poly',
+#                  warmup='linear',
+#                  warmup_iters=1500,
+#                  warmup_ratio=1e-6,
+#                  power=1.0, min_lr=0.0, by_epoch=False)
 
 
 data = dict(
