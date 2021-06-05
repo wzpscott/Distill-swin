@@ -70,6 +70,7 @@ def train_segmentor(model,
             model.cuda(cfg.gpu_ids[0]), device_ids=cfg.gpu_ids)
 
     # build runner
+    print(cfg.optimizer)
     optimizer = build_optimizer(model, cfg.optimizer)
 
     if cfg.get('runner') is None:

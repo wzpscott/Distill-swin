@@ -23,14 +23,14 @@ from .losses import *
 #         if self.training == True:
 #             self.feat[name].append(output)
 class FeatureExtractor(nn.Module):
-    def __init__(self, submodule, cfg, feat):
+    def __init__(self, submodule, distillation, feat):
         super(FeatureExtractor, self).__init__()
         self.submodule = submodule
         self.extracted_layers = []
-        if 'off' not in cfg.distillation['logits']['type']:
-            self.extracted_layers.append(cfg.distillation['logits']['location'])
-        if 'off' not in cfg.distillation['fea']['type']:
-            self.extracted_layers.append(cfg.distillation['fea']['location'])
+        if 'off' not in distillation['logits']['type']:
+            self.extracted_layers.append(distillation['logits']['location'])
+        if 'off' not in distillation['fea']['type']:
+            self.extracted_layers.append(distillation['fea']['location'])
         self.feat = feat
         sub_modules = submodule.named_modules()  
         for name, module in sub_modules:

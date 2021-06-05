@@ -303,6 +303,7 @@ def load_checkpoint(model,
     Returns:
         dict or OrderedDict: The loaded checkpoint.
     """
+
     checkpoint = _load_checkpoint(filename, map_location)
     # OrderedDict is a subclass of dict
     if not isinstance(checkpoint, dict):
@@ -334,22 +335,23 @@ def load_checkpoint(model,
             state_dict['absolute_pos_embed'] = absolute_pos_embed.view(N2, H, W, C2).permute(0, 3, 1, 2)
 
     # interpolate position bias table if needed
-    relative_position_bias_table_keys = [k for k in state_dict.keys() if "relative_position_bias_table" in k]
-    for table_key in relative_position_bias_table_keys:
-        table_pretrained = state_dict[table_key]
-        table_current = model.state_dict()[table_key]
-        L1, nH1 = table_pretrained.size()
-        L2, nH2 = table_current.size()
-        if nH1 != nH2:
-            logger.warning(f"Error in loading {table_key}, pass")
-        else:
-            if L1 != L2:
-                S1 = int(L1 ** 0.5)
-                S2 = int(L2 ** 0.5)
-                table_pretrained_resized = F.interpolate(
-                     table_pretrained.permute(1, 0).view(1, nH1, S1, S1),
-                     size=(S2, S2), mode='bicubic')
-                state_dict[table_key] = table_pretrained_resized.view(nH2, L2).permute(1, 0)
+    
+    # relative_position_bias_table_keys = [k for k in state_dict.keys() if "relative_position_bias_table" in k]
+    # for table_key in relative_position_bias_table_keys:
+    #     table_pretrained = state_dict[table_key]
+    #     table_current = model.state_dict()[table_key]
+    #     L1, nH1 = table_pretrained.size()
+    #     L2, nH2 = table_current.size()
+    #     if nH1 != nH2:
+    #         logger.warning(f"Error in loading {table_key}, pass")
+    #     else:
+    #         if L1 != L2:
+    #             S1 = int(L1 ** 0.5)
+    #             S2 = int(L2 ** 0.5)
+    #             table_pretrained_resized = F.interpolate(
+    #                  table_pretrained.permute(1, 0).view(1, nH1, S1, S1),
+    #                  size=(S2, S2), mode='bicubic')
+    #             state_dict[table_key] = table_pretrained_resized.view(nH2, L2).permute(1, 0)
 
     # load state_dict
     load_state_dict(model, state_dict, strict, logger)

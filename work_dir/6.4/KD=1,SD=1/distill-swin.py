@@ -1,3 +1,106 @@
+norm_cfg = dict(type='BN', requires_grad=True)
+model = dict(
+    type='SDModule',
+    cfg=dict(
+        type='EncoderDecoder',
+        pretrained=None,
+        backbone=dict(
+            type='SwinTransformer',
+            embed_dim=96,
+            depths=[2, 2, 6, 2],
+            num_heads=[3, 6, 12, 24],
+            window_size=7,
+            mlp_ratio=4.0,
+            qkv_bias=True,
+            qk_scale=None,
+            drop_rate=0.0,
+            attn_drop_rate=0.0,
+            drop_path_rate=0.3,
+            ape=False,
+            patch_norm=True,
+            out_indices=(0, 1, 2, 3),
+            use_checkpoint='./checkpoints/swin_tiny_patch4_window7_224.pth'),
+        decode_head=dict(
+            type='UPerHead',
+            in_channels=[96, 192, 384, 768],
+            in_index=[0, 1, 2, 3],
+            pool_scales=(1, 2, 3, 6),
+            channels=512,
+            dropout_ratio=0.1,
+            num_classes=150,
+            norm_cfg=dict(type='BN', requires_grad=True),
+            align_corners=False,
+            loss_decode=dict(
+                type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0)),
+        auxiliary_head=dict(
+            type='FCNHead',
+            in_channels=384,
+            in_index=2,
+            channels=256,
+            num_convs=1,
+            concat_input=False,
+            dropout_ratio=0.1,
+            num_classes=150,
+            norm_cfg=dict(type='BN', requires_grad=True),
+            align_corners=False,
+            loss_decode=dict(
+                type='CrossEntropyLoss', use_sigmoid=False, loss_weight=0.4))),
+    cfg_t=dict(
+        type='EncoderDecoder',
+        pretrained='./checkpoints/upernet_swin_base_patch4_window7_512x512.pth',
+        backbone=dict(
+            type='SwinTransformer',
+            embed_dim=128,
+            depths=[2, 2, 18, 2],
+            num_heads=[4, 8, 16, 32],
+            window_size=7,
+            mlp_ratio=4.0,
+            qkv_bias=True,
+            qk_scale=None,
+            drop_rate=0.0,
+            attn_drop_rate=0.0,
+            drop_path_rate=0.3,
+            ape=False,
+            patch_norm=True,
+            out_indices=(0, 1, 2, 3),
+            use_checkpoint=None),
+        decode_head=dict(
+            type='UPerHead',
+            in_channels=[128, 256, 512, 1024],
+            in_index=[0, 1, 2, 3],
+            pool_scales=(1, 2, 3, 6),
+            channels=512,
+            dropout_ratio=0.1,
+            num_classes=150,
+            norm_cfg=dict(type='BN', requires_grad=True),
+            align_corners=False,
+            loss_decode=dict(
+                type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0)),
+        auxiliary_head=dict(
+            type='FCNHead',
+            in_channels=512,
+            in_index=2,
+            channels=256,
+            num_convs=1,
+            concat_input=False,
+            dropout_ratio=0.1,
+            num_classes=150,
+            norm_cfg=dict(type='BN', requires_grad=True),
+            align_corners=False,
+            loss_decode=dict(
+                type='CrossEntropyLoss', use_sigmoid=False, loss_weight=0.4))),
+    distillation=dict(
+        logits=dict(
+            type='CA',
+            location='decode_head.conv_seg',
+            lambda_=dict(KD=0.0, SD=0.0, CA=0.0)),
+        fea=dict(
+            type='SD',
+            location='decode_head.bottleneck.activate',
+            lambda_=dict(KD=1, SD=1)),
+        mask=dict()),
+    train_cfg=dict(),
+    test_cfg=dict(mode='whole'))
 dataset_type = 'ADE20KDataset'
 data_root = 'data/ade/ADEChallengeData2016'
 img_norm_cfg = dict(
@@ -38,7 +141,7 @@ test_pipeline = [
         ])
 ]
 data = dict(
-    samples_per_gpu=1,
+    samples_per_gpu=8,
     workers_per_gpu=4,
     train=dict(
         type='ADE20KDataset',
@@ -114,67 +217,18 @@ load_from = None
 resume_from = None
 workflow = [('train', 1)]
 cudnn_benchmark = True
-optimizer = dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0005)
+optimizer = dict(type='AdamW', lr=6e-05, betas=(0.9, 0.999), weight_decay=0.01)
 optimizer_config = dict()
-lr_config = dict(policy='poly', power=0.9, min_lr=0.0001, by_epoch=False)
+lr_config = dict(
+    policy='poly',
+    warmup='linear',
+    warmup_iters=1500,
+    warmup_ratio=1e-06,
+    power=1.0,
+    min_lr=0.0,
+    by_epoch=False)
 runner = dict(type='IterBasedRunner', max_iters=20000)
 checkpoint_config = dict(by_epoch=False, interval=2000)
 evaluation = dict(interval=2000, metric='mIoU')
-norm_cfg = dict(type='BN', requires_grad=True)
-work_dir = './checkpoints/6.3/without_distill'
-model = dict(
-    type='EncoderDecoder',
-    backbone=dict(
-        type='SwinTransformer',
-        embed_dim=96,
-        depths=[2, 2, 6, 2],
-        num_heads=[3, 6, 12, 24],
-        window_size=7,
-        mlp_ratio=4.0,
-        qkv_bias=True,
-        qk_scale=None,
-        drop_rate=0.0,
-        attn_drop_rate=0.0,
-        drop_path_rate=0.3,
-        ape=False,
-        patch_norm=True,
-        out_indices=(0, 1, 2, 3),
-        use_checkpoint=False),
-    decode_head=dict(
-        type='UPerHead',
-        in_channels=[96, 192, 384, 768],
-        in_index=[0, 1, 2, 3],
-        pool_scales=(1, 2, 3, 6),
-        channels=512,
-        dropout_ratio=0.1,
-        num_classes=150,
-        norm_cfg=dict(type='BN', requires_grad=True),
-        align_corners=False,
-        loss_decode=dict(
-            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0)),
-    auxiliary_head=dict(
-        type='FCNHead',
-        in_channels=384,
-        in_index=2,
-        channels=256,
-        num_convs=1,
-        concat_input=False,
-        dropout_ratio=0.1,
-        num_classes=150,
-        norm_cfg=dict(type='BN', requires_grad=True),
-        align_corners=False,
-        loss_decode=dict(
-            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=0.4)))
-train_cfg = ({}, )
-test_cfg = dict(mode='whole')
-distillation = dict(
-    logits=dict(
-        type='CA',
-        location='decode_head.conv_seg',
-        lambda_=dict(KD=0.0, SD=0.0, CA=0.0)),
-    fea=dict(
-        type='SD',
-        location='decode_head.bottleneck.activate',
-        lambda_=dict(KD=0.0, SD=0.0)),
-    mask=dict())
+work_dir = './work_dir/6.4/KD=1,SD=1/'
 gpu_ids = range(0, 1)
