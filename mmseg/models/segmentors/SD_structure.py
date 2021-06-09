@@ -28,14 +28,14 @@ class SDModule(BaseSegmentor):
         state_dict = torch.load(cfg_t.pretrained)['state_dict']
         layers_pretrained = [l for l in state_dict]
         layers = [l for l,_ in self.teacher.named_parameters()]
-        print(len(layers_pretrained),len(layers))
-        tmp = []
-        for l in layers_pretrained:
-            if l not in layers:
-                tmp.append(l)
-        print(len(tmp))
-        print(tmp)
-        raise ValueError('stop')
+        # print(len(layers_pretrained),len(layers))
+        # tmp = []
+        # for l in layers_pretrained:
+        #     if l not in layers:
+        #         tmp.append(l)
+        # print(len(tmp))
+        # print(tmp)
+        # raise ValueError('stop')
 
         self.teacher.load_state_dict(torch.load(
             cfg_t.pretrained)['state_dict'])

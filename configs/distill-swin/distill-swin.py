@@ -10,20 +10,18 @@ log_config = dict(
         dict(type='TensorboardLoggerHook') 
         # dict(type='TextLoggerHook')
     ])
-work_dir = './work_dir/6.4/KD=0,SD=0/'
+work_dir = './work_dir/CA=1/'
 
 model = dict(
     cfg=dict(
-        backbone=dict(
-            use_checkpoint='./checkpoints/swin_tiny_patch4_window7_224.pth',
-        )
+        pretrained='./checkpoints/swin_tiny_patch4_window7_224.pth',
         
     ),
     cfg_t=dict(
         pretrained='./checkpoints/upernet_swin_base_patch4_window7_512x512.pth',
     ),
     distillation = dict(
-        logits=dict(type='CA', location='decode_head.conv_seg', lambda_=dict(KD=0.0, SD=0.0, CA=0.0)),
+        logits=dict(type='CA', location='decode_head.conv_seg', lambda_=dict(KD=0, SD=0.0, CA=1)),
         fea=dict(type='SD', location='decode_head.bottleneck.activate', lambda_=dict(KD=0, SD=0)),
         mask=dict()
     ),

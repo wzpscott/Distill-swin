@@ -1,8 +1,9 @@
 _base_ = [
     '../_base_/models/upernet_swin.py', '../_base_/datasets/ade20k.py',
-    '../_base_/default_runtime.py', '../_base_/schedules/schedule_20k.py'
+    '../_base_/default_runtime.py', '../_base_/schedules/schedule_160k.py'
 ]
 model = dict(
+    pretrained='./checkpoints/swin_tiny_patch4_window7_224.pth',
     backbone=dict(
         embed_dim=96,
         depths=[2, 2, 6, 2],
@@ -11,7 +12,7 @@ model = dict(
         ape=False,
         drop_path_rate=0.3,
         patch_norm=True,
-        use_checkpoint='./checkpoints/swin_tiny_patch4_window7_224.pth'
+        # use_checkpoint='./checkpoints/swin_tiny_patch4_window7_224.pth'
     ),
     decode_head=dict(
         in_channels=[96, 192, 384, 768],
@@ -27,7 +28,7 @@ log_config = dict(
         dict(type='TensorboardLoggerHook') 
         # dict(type='TextLoggerHook')
     ])
-work_dir = './work_dir/6.4/baseline/'
+work_dir = './work_dir/baseline_pretrained/'
 # AdamW optimizer, no weight decay for position embedding & layer norm in backbone
 optimizer = dict(_delete_=True, type='AdamW', lr=0.00006, betas=(0.9, 0.999), weight_decay=0.01,
                  paramwise_cfg=dict(custom_keys={'absolute_pos_embed': dict(decay_mult=0.),
@@ -39,6 +40,7 @@ lr_config = dict(_delete_=True, policy='poly',
                  warmup_iters=1500,
                  warmup_ratio=1e-6,
                  power=1.0, min_lr=0.0, by_epoch=False)
+evaluation = dict(interval=2000, metric='mIoU')
 
 # By default, models are trained on 8 GPUs with 2 images per GPU
-data=dict(samples_per_gpu=6)
+data=dict(samples_per_gpu=8)
