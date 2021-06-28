@@ -19,7 +19,7 @@ from ..builder import BACKBONES
 
 class Mlp(nn.Module):
     """ Multilayer perceptron."""
-
+    # 两层feed-forward
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
         super().__init__()
         out_features = out_features or in_features
@@ -64,6 +64,7 @@ def window_reverse(windows, window_size, H, W):
     Returns:
         x: (B, H, W, C)
     """
+    # window_partition 的逆变换
     B = int(windows.shape[0] / (H * W / window_size / window_size))
     x = windows.view(B, H // window_size, W // window_size, window_size, window_size, -1)
     x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, -1)
@@ -88,17 +89,17 @@ class WindowAttention(nn.Module):
 
         super().__init__()
         self.dim = dim
-        self.window_size = window_size  # Wh, Ww
+        self.window_size = window_size  # [Wh, Ww]
         self.num_heads = num_heads
         head_dim = dim // num_heads
         self.scale = qk_scale or head_dim ** -0.5
 
         # define a parameter table of relative position bias
         self.relative_position_bias_table = nn.Parameter(
-            torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
+            torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), num_heads))  # [2*Wh-1 * 2*Ww-1, nH]
 
         # get pair-wise relative position index for each token inside the window
-        coords_h = torch.arange(self.window_size[0])
+        coords_h = torch.arange(self.window_size[0])  # 坐标
         coords_w = torch.arange(self.window_size[1])
         coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
         coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
@@ -127,14 +128,15 @@ class WindowAttention(nn.Module):
         """
         B_, N, C = x.shape
         qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        #  [B_,N,C]->[B_,N,3*C]->[B_,N,3,num_heads,C//num_heads]->[3,B_,num_heads,N,C//num_heads]
         q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
 
         q = q * self.scale
-        attn = (q @ k.transpose(-2, -1))
+        attn = (q @ k.transpose(-2, -1))  # [B_,num_heads,N,N]
 
         relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
-            self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
-        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
+            self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # [N,N,num_heads]
+        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # [num_heads,N,N]
         attn = attn + relative_position_bias.unsqueeze(0)
 
         if mask is not None:

@@ -191,10 +191,10 @@ class BaseSegmentor(nn.Module):
             else:
                 raise TypeError(
                     f'{loss_name} is not a tensor or list of tensors')
-
+       
         loss = sum(_value for _key, _value in log_vars.items()
-                   if 'loss' in _key)
-
+                   if 'loss' in _key) 
+                   
         log_vars['loss'] = loss
         for loss_name, loss_value in log_vars.items():
             # reduce loss when distributed training

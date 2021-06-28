@@ -1,6 +1,6 @@
 norm_cfg = dict(type='BN', requires_grad=True)
 model = dict(
-    type='SDModule',
+    type='SDModule_',
     cfg=dict(
         type='EncoderDecoder',
         pretrained=None,
@@ -91,11 +91,9 @@ model = dict(
             loss_decode=dict(
                 type='CrossEntropyLoss', use_sigmoid=False, loss_weight=0.4)),
     ),
-    distillation = dict(
-        logits=dict(type='CA', location='decode_head.conv_seg', lambda_=dict(KD=0.0, SD=0.0, CA=0.0)),
-        fea=dict(type='SD', location='decode_head.bottleneck.activate', lambda_=dict(KD=1, SD=10)),
-        mask=dict()
-    ),
+    distillation = dict(),
+    s_pretrain=None,
+    t_pretrain=None,
     train_cfg=dict(),
     test_cfg=dict(mode='whole'),
 )

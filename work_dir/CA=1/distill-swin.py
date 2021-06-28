@@ -92,7 +92,7 @@ model = dict(
     distillation=dict(
         logits=dict(
             type='CA',
-            location='decode_head.conv_seg',
+            location='layers.2.blocks.5.mlp',
             lambda_=dict(KD=0, SD=0.0, CA=1)),
         fea=dict(
             type='SD',
@@ -227,8 +227,8 @@ lr_config = dict(
     power=1.0,
     min_lr=0.0,
     by_epoch=False)
-runner = dict(type='IterBasedRunner', max_iters=20000)
-checkpoint_config = dict(by_epoch=False, interval=2000)
+runner = dict(type='IterBasedRunner', max_iters=80000)
+checkpoint_config = dict(by_epoch=False, interval=8000)
 evaluation = dict(interval=2000, metric='mIoU')
 work_dir = './work_dir/CA=1/'
 gpu_ids = range(0, 1)
