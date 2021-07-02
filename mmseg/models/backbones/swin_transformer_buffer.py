@@ -159,11 +159,11 @@ class BufferBlock(nn.Module):
         super().__init__()
         self.buffer = nn.Sequential(
             nn.Conv2d(dim,dim,1),
-            nn.GELU()
+            nn.GELU(),
             nn.Conv2d(dim,dim,1),
-            nn.GELU()
+            nn.GELU(),
             nn.Conv2d(dim,dim,1),
-            nn.GELU()
+            nn.GELU(),
         )
     def forward(self,x):
         return self.buffer(x)
@@ -466,7 +466,7 @@ class PatchEmbed(nn.Module):
 
 
 @BACKBONES.register_module()
-class SwinTransformer(nn.Module):
+class SwinTransformerBuffer(nn.Module):
     """ Swin Transformer backbone.
         A PyTorch impl of : `Swin Transformer: Hierarchical Vision Transformer using Shifted Windows`  -
           https://arxiv.org/pdf/2103.14030
@@ -646,6 +646,6 @@ class SwinTransformer(nn.Module):
 
     def train(self, mode=True):
         """Convert the model into training mode while keep layers freezed."""
-        super(SwinTransformer, self).train(mode)
+        super().train(mode)
         self._freeze_stages()
 

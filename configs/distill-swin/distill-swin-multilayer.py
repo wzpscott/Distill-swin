@@ -10,7 +10,7 @@ log_config = dict(
         dict(type='TensorboardLoggerHook') 
         # dict(type='TextLoggerHook')
     ])
-work_dir = './work_dir/7.1（2）/'
+work_dir = './work_dir/7.2/fix_weight'
 
 model = dict(
     distillation = dict(
@@ -36,3 +36,4 @@ lr_config = dict(_delete_=True, policy='poly',
 
 data = dict(samples_per_gpu=8)
 evaluation = dict(interval=2000, metric='mIoU')  
+

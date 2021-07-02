@@ -28,7 +28,6 @@ class Extractor(nn.Module):
     def __init__(self, submodule, patterns):
         super(Extractor, self).__init__()
         sub_modules_names = [name for name,_ in submodule.named_modules()]
-
         self.extracted_layers = []
         for name in sub_modules_names:
             for pat in patterns:
@@ -123,6 +122,7 @@ class DistillationLoss(nn.Module):
 
 class Adaptor(nn.Module):
     def __init__(self,input_size,output_size):
+        super().__init__()
         self.ff = nn.Sequential(
             nn.Conv1d(input_size,input_size, kernel_size=1, stride=1, padding=0),
             nn.GELU(),
@@ -136,7 +136,6 @@ class Adaptor(nn.Module):
 class DistillationLoss_(nn.Module):
     def __init__(self, s_cfg, t_cfg,s_shapes,t_shapes,distillation,layers):
         super().__init__()
-        
         self.kd_loss = CriterionKDMSE()
 
         self.adaptors = nn.ModuleList()
@@ -153,7 +152,6 @@ class DistillationLoss_(nn.Module):
             if s_shape  == t_shape:
                 self.adaptors.append(None)
             else:
-                print(s_shape,t_shape)
                 self.adaptors.append(Adaptor(s_shape,t_shape))
 
         self.layers = layers
@@ -161,55 +159,38 @@ class DistillationLoss_(nn.Module):
         # add gradients to weight of each layer's loss
         self.strategy = distillation['weights_init_strategy']
         if self.strategy=='equal':
-            weights = [5*1e3 for i in range(s_shape)]
-            weights = nn.Parameter(torch.Tensor(weights),requires_grad=True)
+            # weights = [5*1e3 for i in range(s_shape)]
+            weights = [1e6,1e6,1e6,1e6,1e5,1e5,1e3,1e3]
+            weights = nn.Parameter(torch.Tensor(weights),requires_grad=False)
             self.weights = weights
         elif self.strategy=='weight_average':
-            self.sd_weight = nn.Parameter(torch.Tensor([0.5]),requires_grad=True)
-            self.decode_weight = 1-self.sd_weight
+            self.sd_weight = nn.Parameter(torch.Tensor([0.8]),requires_grad=True)
         else:
             raise ValueError('Wrong weights init strategy')
 
     def forward(self, soft, pred, losses):
-        sd_loss = 0
         for i in range(len(pred)):
             adaptor=self.adaptors[i]
+            pred[i] = pred[i].permute(0,2,1)
+            soft[i] = soft[i].permute(0,2,1)
+
             if adaptor is None:
                 pred[i] = pred[i]
             else:
-                pred[i] = pred[i].permute(0,2,1)
                 pred[i] = adaptor(pred[i])
-                pred[i] = pred[i].permute(0,2,1)
-
+            
             pred[i] = self.s_norms[i](pred[i])
             soft[i] = self.t_norms[i](soft[i])
+            
+            pred[i] = pred[i].permute(0,2,1)
+            soft[i] = soft[i].permute(0,2,1)
 
             # maxpool = nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0,
             #                         ceil_mode=True)
             # loss = self.weights[i]*self.kd_loss(maxpool(pred[i]), maxpool(soft[i]))
 
-            # loss = self.weights[i]*self.kd_loss(pred[i], soft[i])
-            # name = self.layers[i]
-            # losses['weight_'+name] = self.weights[i]
-            # losses.update({'loss_'+name: loss})
-
-            if self.strategy == 'weight_average':
-                sd_loss += self.kd_loss(pred[i], soft[i])
-
-        # check whether there's weight less than 0
-        if self.sd_weight.item() <= 0:
-            self.sd_weight.data = torch.Tensor([0])
-            self.decode_weight = 1-self.sd_weight
-        elif self.sd_weight.item() >= 1:
-            self.sd_weight.data = torch.Tensor([0.95])
-            self.decode_weight = 1-self.sd_weight
-
-
-        losses['decode.loss_seg'] = self.decode_weight*losses['decode.loss_seg']
-        losses['aux.loss_seg'] = self.decode_weight*losses['aux.loss_seg']
-        losses['sd_loss'] = self.sd_weight*sd_loss
-
-        losses['weight_'+'decode'] = self.decode_weight
-        losses['weight_'+'sd'] = self.sd_weight
+            loss = self.weights[i]*self.kd_loss(pred[i], soft[i])
+            name = self.layers[i]
+            losses.update({'loss_'+name: loss})
 
         return losses

@@ -465,19 +465,24 @@ class SDModule_(BaseSegmentor):
 
         return loss_dict
     
-    def student_init(self,strategy,s_pretrain=None,t_pretrain=None):
-        if strategy == 'use_pretrain':
-            # load student weights
-            # layers of pretrained model don't have prefix like 'backbone.', 
-            # such prefix should be added in order to keep consistency with student layers
+    def student_init(self,strategy,s_pretrain=None,t_pretrain=None,distillation=None):
+        if strategy == 'use_pretrain':# 使用预训练模型
+            # 载入student的权重
+            # 预训练模型的层名称没有‘backbone.’ 的前缀，因此在载入前需要增加前缀
             state_dict = torch.load(s_pretrain)['model']
             new_keys = ['backbone.'+key for key in state_dict]
             d1 = dict( zip( list(state_dict.keys()), new_keys) )
             new_state_dict = {d1[oldK]: value for oldK, value in state_dict.items()}
             self.student.load_state_dict(new_state_dict,strict=False)
-        elif strategy == 'use_teacher' :
-            assert self.cfg_s.embed_dim == self.cfg_t.embed_dim
-            state_dict = torch.load(s_pretrain)['model']
+        elif strategy == 'use_teacher' :# 跳层初始化
+            assert self.cfg_s.embed_dim == self.cfg_t.embed_dim  # 跳层初始化需要维度一致
+
+            state_dict = torch.load(t_pretrain)['state_dict']  # 载入teacher模型
+            student_module_names = [name for name,_ in student_module_names.named_modules()]
+            teacher_module_names = [name for name,_ in teacher_module_names.named_modules()]
+
+            
+
         else:
             raise ValueError('Wrong student init strategy')
 
