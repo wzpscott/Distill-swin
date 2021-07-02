@@ -10,15 +10,15 @@ log_config = dict(
         dict(type='TensorboardLoggerHook') 
         # dict(type='TextLoggerHook')
     ])
-work_dir = './work_dir/6.28_fea_2/'
+work_dir = './work_dir/7.1（2）/'
 
 model = dict(
     distillation = dict(
         s_patterns=['backbone.layers.[013].blocks.[01].mlp.fc2',
-                    'backbone.layers.[2].blocks.[0-5].mlp.fc2',
+                    'backbone.layers.[2].blocks.[05].mlp.fc2',
                     ],
         t_patterns=['backbone.layers.[013].blocks.[01].mlp.fc2',
-                    'backbone.layers.[2].blocks.(0|3|6|10|14|17).mlp.fc2',
+                    'backbone.layers.[2].blocks.(0|17).mlp.fc2',
                     ],
         weights_init_strategy='equal',
     ),
@@ -34,5 +34,5 @@ lr_config = dict(_delete_=True, policy='poly',
                  warmup_ratio=1e-6,
                  power=1.0, min_lr=0.0, by_epoch=False)
 
-data = dict(samples_per_gpu=4)
+data = dict(samples_per_gpu=8)
 evaluation = dict(interval=2000, metric='mIoU')  

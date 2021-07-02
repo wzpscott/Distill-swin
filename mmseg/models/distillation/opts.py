@@ -52,7 +52,8 @@ class Extractor(nn.Module):
                 module.register_forward_hook(partial(self.hook_fn_forward, name=name))
 
     def hook_fn_forward(self, module, input, output, name):
-        self.feat.append(output)
+        if self.training == True:
+            self.feat.append(output)
 
 
 class DistillationLoss(nn.Module):
@@ -120,52 +121,95 @@ class DistillationLoss(nn.Module):
         
         return sd_loss
 
+class Adaptor(nn.Module):
+    def __init__(self,input_size,output_size):
+        self.ff = nn.Sequential(
+            nn.Conv1d(input_size,input_size, kernel_size=1, stride=1, padding=0),
+            nn.GELU(),
+            nn.Conv1d(input_size,output_size, kernel_size=1, stride=1, padding=0),
+            nn.GELU(),
+            nn.Conv1d(output_size,output_size, kernel_size=1, stride=1, padding=0),
+        )
+    def forward(self,x):
+        return self.ff(x)
+
 class DistillationLoss_(nn.Module):
     def __init__(self, s_cfg, t_cfg,s_shapes,t_shapes,distillation,layers):
         super().__init__()
+        
         self.kd_loss = CriterionKDMSE()
 
         self.adaptors = nn.ModuleList()
+        self.s_norms = nn.ModuleList()
+        self.t_norms = nn.ModuleList()
+
         for i in range(len(s_shapes)):
             s_shape = s_shapes[i]
             t_shape = t_shapes[i]
+
+            self.s_norms.append(nn.BatchNorm1d(t_shape))
+            self.t_norms.append(nn.BatchNorm1d(t_shape))
+
             if s_shape  == t_shape:
                 self.adaptors.append(None)
             else:
-                self.adaptors.append(nn.Linear(s_shape,t_shape))
+                print(s_shape,t_shape)
+                self.adaptors.append(Adaptor(s_shape,t_shape))
 
         self.layers = layers
         
         # add gradients to weight of each layer's loss
-        strategy = distillation['weights_init_strategy']
-        if strategy=='equal':
-            weights = [1e4 for i in range(s_shape)]+[1,1]
+        self.strategy = distillation['weights_init_strategy']
+        if self.strategy=='equal':
+            weights = [5*1e3 for i in range(s_shape)]
             weights = nn.Parameter(torch.Tensor(weights),requires_grad=True)
-        elif strategy=='decay':
-            raise ValueError('Not implement error')
+            self.weights = weights
+        elif self.strategy=='weight_average':
+            self.sd_weight = nn.Parameter(torch.Tensor([0.5]),requires_grad=True)
+            self.decode_weight = 1-self.sd_weight
         else:
             raise ValueError('Wrong weights init strategy')
-        self.weights = weights
 
     def forward(self, soft, pred, losses):
+        sd_loss = 0
         for i in range(len(pred)):
             adaptor=self.adaptors[i]
             if adaptor is None:
                 pred[i] = pred[i]
             else:
+                pred[i] = pred[i].permute(0,2,1)
                 pred[i] = adaptor(pred[i])
+                pred[i] = pred[i].permute(0,2,1)
 
-            maxpool = nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0,
-                                    ceil_mode=True)
+            pred[i] = self.s_norms[i](pred[i])
+            soft[i] = self.t_norms[i](soft[i])
 
-            loss = self.weights[i]*self.kd_loss(maxpool(pred[i]), maxpool(soft[i]))
-            name = self.layers[i]
-            losses['weight_'+name] = self.weights[i]
-            losses.update({'loss_'+name: loss})
-        losses['decode.loss_seg'] = self.weights[-2]*losses['decode.loss_seg']
-        losses['aux.loss_seg'] = self.weights[-1]*losses['aux.loss_seg']
+            # maxpool = nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0,
+            #                         ceil_mode=True)
+            # loss = self.weights[i]*self.kd_loss(maxpool(pred[i]), maxpool(soft[i]))
 
-        losses['weight_'+'decode'] = self.weights[-2]
-        losses['weight_'+'aux'] = self.weights[-1]
+            # loss = self.weights[i]*self.kd_loss(pred[i], soft[i])
+            # name = self.layers[i]
+            # losses['weight_'+name] = self.weights[i]
+            # losses.update({'loss_'+name: loss})
+
+            if self.strategy == 'weight_average':
+                sd_loss += self.kd_loss(pred[i], soft[i])
+
+        # check whether there's weight less than 0
+        if self.sd_weight.item() <= 0:
+            self.sd_weight.data = torch.Tensor([0])
+            self.decode_weight = 1-self.sd_weight
+        elif self.sd_weight.item() >= 1:
+            self.sd_weight.data = torch.Tensor([0.95])
+            self.decode_weight = 1-self.sd_weight
+
+
+        losses['decode.loss_seg'] = self.decode_weight*losses['decode.loss_seg']
+        losses['aux.loss_seg'] = self.decode_weight*losses['aux.loss_seg']
+        losses['sd_loss'] = self.sd_weight*sd_loss
+
+        losses['weight_'+'decode'] = self.decode_weight
+        losses['weight_'+'sd'] = self.sd_weight
 
         return losses
