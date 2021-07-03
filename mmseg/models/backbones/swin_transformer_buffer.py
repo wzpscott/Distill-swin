@@ -158,15 +158,17 @@ class BufferBlock(nn.Module):
     def __init__(self,dim):
         super().__init__()
         self.buffer = nn.Sequential(
-            nn.Conv2d(dim,dim,1),
+            nn.Conv1d(dim,dim,1),
             nn.GELU(),
-            nn.Conv2d(dim,dim,1),
+            nn.Conv1d(dim,dim,1),
             nn.GELU(),
-            nn.Conv2d(dim,dim,1),
-            nn.GELU(),
+            nn.Conv1d(dim,dim,1),
         )
     def forward(self,x):
-        return self.buffer(x)
+        x = x.permute(0,2,1)
+        x = self.buffer(x)
+        x = x.permute(0,2,1)
+        return x
 
 class SwinTransformerBlock(nn.Module):
     """ Swin Transformer Block.
@@ -188,7 +190,7 @@ class SwinTransformerBlock(nn.Module):
 
     def __init__(self, dim, num_heads, window_size=7, shift_size=0,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
-                 act_layer=nn.GELU, norm_layer=nn.LayerNorm):
+                 act_layer=nn.GELU, norm_layer=nn.LayerNorm,buffer=False):
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
@@ -210,7 +212,10 @@ class SwinTransformerBlock(nn.Module):
         self.H = None
         self.W = None
 
-        self.buffer = BufferBlock(dim = dim)
+        if buffer:
+            self.buffer = BufferBlock(dim = dim)
+        else:
+            self.buffer = None
 
     def forward(self, x, mask_matrix):
         """ Forward function.
@@ -270,7 +275,8 @@ class SwinTransformerBlock(nn.Module):
         x = x + self.drop_path(self.mlp(self.norm2(x)))
 
         # Buffer
-        x = self.buffer(x)
+        if self.buffer:
+            x = self.buffer(x)
         
         return x
 
@@ -349,6 +355,7 @@ class BasicLayer(nn.Module):
                  attn_drop=0.,
                  drop_path=0.,
                  norm_layer=nn.LayerNorm,
+                 buffer=False,
                  downsample=None,
                  use_checkpoint=False):
         super().__init__()
@@ -370,7 +377,8 @@ class BasicLayer(nn.Module):
                 drop=drop,
                 attn_drop=attn_drop,
                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                norm_layer=norm_layer)
+                norm_layer=norm_layer,
+                buffer=buffer if i!=depth-1 else False)
             for i in range(depth)])
 
         # patch merging layer
@@ -544,6 +552,8 @@ class SwinTransformerBuffer(nn.Module):
         # stochastic depth
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
 
+        # buffer setting
+        buffer = [False,False,True,False]
         # build layers
         self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers):
@@ -559,6 +569,7 @@ class SwinTransformerBuffer(nn.Module):
                 attn_drop=attn_drop_rate,
                 drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
                 norm_layer=norm_layer,
+                buffer=buffer[i_layer],
                 downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
                 use_checkpoint=use_checkpoint)
             self.layers.append(layer)

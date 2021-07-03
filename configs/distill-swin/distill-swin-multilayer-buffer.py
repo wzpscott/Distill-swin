@@ -19,7 +19,7 @@ model = dict(
         type='EncoderDecoder',
         pretrained=None,
         backbone=dict(
-            type='SwinTransformer_',
+            type='SwinTransformerBuffer',
             embed_dim=128,
             depths=[2, 2, 6, 2],
             num_heads=[4, 8, 16, 32],
@@ -48,7 +48,7 @@ model = dict(
                 type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0)),
         auxiliary_head=dict(
             type='FCNHead',
-            in_channels=384,
+            in_channels=512,
             in_index=2,
             channels=256,
             num_convs=1,
@@ -106,11 +106,9 @@ model = dict(
                 type='CrossEntropyLoss', use_sigmoid=False, loss_weight=0.4)),
     ),
     distillation = dict(
-        s_patterns=['backbone.layers.[013].blocks.[01].mlp.fc2',
-                    'backbone.layers.[2].blocks.[05].mlp.fc2',
+        s_patterns=['backbone.layers.[2].blocks.[04].buffer.4',
                     ],
-        t_patterns=['backbone.layers.[013].blocks.[01].mlp.fc2',
-                    'backbone.layers.[2].blocks.(0|17).mlp.fc2',
+        t_patterns=['backbone.layers.[2].blocks.(2|5|9|13|16).mlp.fc2',
                     ],
         weights_init_strategy='weight_average',
     ),
@@ -128,5 +126,5 @@ lr_config = dict(_delete_=True, policy='poly',
                  warmup_ratio=1e-6,
                  power=1.0, min_lr=0.0, by_epoch=False)
 
-data = dict(samples_per_gpu=8)
+data = dict(samples_per_gpu=2)
 evaluation = dict(interval=2000, metric='mIoU')  
