@@ -10,6 +10,7 @@ from ..builder import SEGMENTORS
 from .base import BaseSegmentor
 import torch
 from collections import OrderedDict
+import numpy as np
 
 @SEGMENTORS.register_module()
 class SDModule_(BaseSegmentor):
@@ -28,7 +29,7 @@ class SDModule_(BaseSegmentor):
             param.requires_grad = False
         self.student = builder.build_segmentor(
             cfg, train_cfg=train_cfg, test_cfg=test_cfg)
-        self.student_init(strategy='use_teacher',s_pretrain=s_pretrain,t_pretrain=t_pretrain)
+        self.student_init(strategy='use_pretrain',s_pretrain=s_pretrain,t_pretrain=t_pretrain)
 
         self.s_fea = Extractor(self.student, distillation.s_patterns)
         self.t_fea = Extractor(self.teacher, distillation.t_patterns)
@@ -44,6 +45,12 @@ class SDModule_(BaseSegmentor):
         self.align_corners = False
         self.test_mode = 'whole'
 
+        self.counter = {'total':0,'aux.loss_seg':0,'loss_backbone.layers.0.blocks.0.mlp.fc2':0,
+        'loss_backbone.layers.0.blocks.1.mlp.fc2':0,'loss_backbone.layers.1.blocks.0.mlp.fc2':0,
+         'loss_backbone.layers.1.blocks.1.mlp.fc2':0, 'loss_backbone.layers.2.blocks.0.mlp.fc2':0,
+         'loss_backbone.layers.2.blocks.5.mlp.fc2':0,'loss_backbone.layers.3.blocks.0.mlp.fc2':0,
+         'loss_backbone.layers.3.blocks.1.mlp.fc2':0
+        }
         
 
     def forward_train(self, img, img_metas, gt_semantic_seg):
@@ -103,6 +110,56 @@ class SDModule_(BaseSegmentor):
         else:
             raise ValueError('Wrong student init strategy')
 
+    def get_grad(self,loss):
+        loss.backward(retain_graph=True)
+        grads = torch.Tensor([]).cuda()
+        for name,param in self.student.named_parameters():
+            if param.grad is None:
+                grad = torch.zeros(param.shape).cuda()
+                grads = torch.cat([grads,grad.flatten()])
+            else:
+                grads = torch.cat([grads,param.grad.flatten()])
+        self.student.zero_grad()
+        return grads
+    # @staticmethod
+    def _parse_losses(self,losses):
+        log_vars = OrderedDict()
+        for loss_name, loss_value in losses.items():
+            if isinstance(loss_value, torch.Tensor):
+                log_vars[loss_name] = loss_value.mean()
+            elif isinstance(loss_value, list):
+                log_vars[loss_name] = sum(_loss.mean() for _loss in loss_value)
+            else:
+                raise TypeError(
+                    f'{loss_name} is not a tensor or list of tensors')
+
+        loss = 0
+        decode_grad = self.get_grad(log_vars['decode.loss_seg'])
+        for key,value in log_vars.items():
+            if 'loss' in key and 'decode' not in key:
+                loss_grad = self.get_grad(log_vars[key])
+                cos = loss_grad@decode_grad
+                if cos>0:
+                    loss += value
+                else:
+                    self.counter[key] += 1
+                self.counter['total'] += 1
+        if (self.counter['total']+1) % 10 == 0:
+            print(self.counter)
+            print({k:v/self.counter['total'] for k,v in self.counter.items()})
+        del decode_grad
+        # loss = sum(_value for _key, _value in log_vars.items()
+        #            if 'loss' in _key) 
+                   
+        log_vars['loss'] = loss
+        for loss_name, loss_value in log_vars.items():
+            # reduce loss when distributed training
+            if dist.is_available() and dist.is_initialized():
+                loss_value = loss_value.data.clone()
+                dist.all_reduce(loss_value.div_(dist.get_world_size()))
+            log_vars[loss_name] = loss_value.item()
+
+        return loss, log_vars
 
     def slide_inference(self, img, img_meta, rescale):
         """Inference by sliding-window with overlap."""
