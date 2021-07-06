@@ -45,6 +45,8 @@ class SDModule_(BaseSegmentor):
         self.align_corners = False
         self.test_mode = 'whole'
 
+
+
         self.counter = {'total':0,'aux.loss_seg':0,'loss_backbone.layers.0.blocks.0.mlp.fc2':0,
         'loss_backbone.layers.0.blocks.1.mlp.fc2':0,'loss_backbone.layers.1.blocks.0.mlp.fc2':0,
          'loss_backbone.layers.1.blocks.1.mlp.fc2':0, 'loss_backbone.layers.2.blocks.0.mlp.fc2':0,
@@ -121,7 +123,6 @@ class SDModule_(BaseSegmentor):
                 grads = torch.cat([grads,param.grad.flatten()])
         self.student.zero_grad()
         return grads
-    # @staticmethod
     def _parse_losses(self,losses):
         log_vars = OrderedDict()
         for loss_name, loss_value in losses.items():
@@ -132,25 +133,41 @@ class SDModule_(BaseSegmentor):
             else:
                 raise TypeError(
                     f'{loss_name} is not a tensor or list of tensors')
+        if self.distillation.parse_mode == 'regular':
+            loss = sum(_value for _key, _value in log_vars.items()
+                    if 'loss' in _key) 
+        elif self.distillation.parse_mode == 'SCKD':
+            loss = 0
+            decode_grad = self.get_grad(log_vars['decode.loss_seg'])
+            lambdas = {'decode.loss_seg':1}
+            for key,value in log_vars.items():
+                if 'loss' in key and 'decode' not in key:
+                    loss_grad = self.get_grad(log_vars[key])
+                    cos = loss_grad@decode_grad
+                    if cos>0:
+                        lambdas[key] = 1
+                    else:
+                        lambdas[key] = 0
+            loss = sum(_value*lambdas[_key] for _key, _value in log_vars.items()
+                    if 'loss' in _key) 
+        elif self.distillation.parse_mode == 'orthogonal':
+            loss = 0
+            decode_grad = self.get_grad(log_vars['decode.loss_seg']) # 主损失梯度
+            decode_grad_magnitude = decode_grad@decode_grad  # 主损失梯度的模长
+            decode_grad_direction = decode_grad/decode_grad_magnitude # 主损失梯度的方向
 
-        loss = 0
-        decode_grad = self.get_grad(log_vars['decode.loss_seg'])
-        for key,value in log_vars.items():
-            if 'loss' in key and 'decode' not in key:
-                loss_grad = self.get_grad(log_vars[key])
-                cos = loss_grad@decode_grad
-                if cos>0:
-                    loss += value
-                else:
-                    self.counter[key] += 1
-                self.counter['total'] += 1
-        if (self.counter['total']+1) % 10 == 0:
-            print(self.counter)
-            print({k:v/self.counter['total'] for k,v in self.counter.items()})
-        del decode_grad
-        # loss = sum(_value for _key, _value in log_vars.items()
-        #            if 'loss' in _key) 
-                   
+            for key,value in log_vars.items():
+                if 'loss' in key and 'decode' not in key:
+                    distill_loss = log_vars[key]
+                    distill_loss.backward(retain_graph=True)
+                    for name,param in self.student.named_parameters():
+                        if param.grad is None:
+                            continue
+                        else:
+                           distill_grad = param.grad
+                           projection = distill_grad@decode_grad_direction*decode_grad_direction
+                           param.grad = -1*projection
+            loss = log_vars['decode.loss_seg']
         log_vars['loss'] = loss
         for loss_name, loss_value in log_vars.items():
             # reduce loss when distributed training
