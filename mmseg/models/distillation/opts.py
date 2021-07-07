@@ -2,6 +2,11 @@ from functools import partial
 from .losses import *
 import re
 from collections import OrderedDict
+
+import torch
+import torch.nn as nn 
+import torch.nn.functional as F 
+
 class FeatureExtractor(nn.Module):
     def __init__(self, submodule, distillation, feat):
         super(FeatureExtractor, self).__init__()
@@ -123,13 +128,14 @@ class DistillationLoss(nn.Module):
 class Adaptor(nn.Module):
     def __init__(self,input_size,output_size):
         super().__init__()
-        self.ff = nn.Sequential(
-            nn.Conv1d(input_size,input_size, kernel_size=1, stride=1, padding=0),
-            nn.GELU(),
-            nn.Conv1d(input_size,output_size, kernel_size=1, stride=1, padding=0),
-            nn.GELU(),
-            nn.Conv1d(output_size,output_size, kernel_size=1, stride=1, padding=0),
-        )
+        # self.ff = nn.Sequential(
+        #     nn.Conv1d(input_size,input_size, kernel_size=1, stride=1, padding=0),
+        #     nn.GELU(),
+        #     nn.Conv1d(input_size,output_size, kernel_size=1, stride=1, padding=0),
+        #     nn.GELU(),
+        #     nn.Conv1d(output_size,output_size, kernel_size=1, stride=1, padding=0),
+        # )
+        self.ff = nn.Conv1d(input_size,output_size, kernel_size=1, stride=1, padding=0)
     def forward(self,x):
         return self.ff(x)
 
@@ -159,16 +165,23 @@ class DistillationLoss_(nn.Module):
         # add gradients to weight of each layer's loss
         self.strategy = distillation['weights_init_strategy']
         if self.strategy=='equal':
-            # weights = [5*1e3 for i in range(s_shape)]
             weights = [1e6,1e6,1e6,1e6,1e5,1e5,1e3,1e3]
             weights = nn.Parameter(torch.Tensor(weights),requires_grad=False)
             self.weights = weights
         elif self.strategy=='weight_average':
             self.sd_weight = nn.Parameter(torch.Tensor([0.8]),requires_grad=True)
+        elif self.strategy=='self_adjust':
+            weights_1 = [1e6,1e6,1e6,1e6,1e5,1e5,1e3,1e3,1,1]
+            weights_1 = nn.Parameter(torch.Tensor(weights_1),requires_grad=False)
+            self.weights_1 = weights_1
+
+            weights_2 = nn.Parameter(torch.Tensor([2.71 for i in range(10)]),requires_grad=True)
+            self.weights_2 = weights_2
         else:
             raise ValueError('Wrong weights init strategy')
 
     def forward(self, soft, pred, losses):
+        ws = F.softmax(1/(torch.log(self.weights_2))**2)
         for i in range(len(pred)):
             adaptor=self.adaptors[i]
             pred[i] = pred[i].permute(0,2,1)
@@ -185,12 +198,19 @@ class DistillationLoss_(nn.Module):
             pred[i] = pred[i].permute(0,2,1)
             soft[i] = soft[i].permute(0,2,1)
 
-            # maxpool = nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0,
-            #                         ceil_mode=True)
+            maxpool = nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0,
+                                    ceil_mode=True)
             # loss = self.weights[i]*self.kd_loss(maxpool(pred[i]), maxpool(soft[i]))
 
-            loss = self.weights[i]*self.kd_loss(pred[i], soft[i])
+            loss = self.weights_1[i]*ws[i]*\
+                    self.kd_loss(maxpool(pred[i]), maxpool(soft[i]))\
+                    +torch.log(self.weights_2[i])
             name = self.layers[i]
             losses.update({'loss_'+name: loss})
+            losses.update({'weight_'+name: self.weights_2[i]})
+        losses['decode.loss_seg'] = ws[8]*losses['decode.loss_seg']+torch.log(self.weights_2[8])
+        losses['aux.loss_seg'] = ws[9]*losses['decode.loss_seg']+torch.log(self.weights_2[9])
 
+        losses.update({'weight_'+'decode.loss_seg': self.weights_2[8]})
+        losses.update({'weight_'+'aux.loss_seg': self.weights_2[9]})
         return losses

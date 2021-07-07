@@ -133,50 +133,33 @@ class SDModule_(BaseSegmentor):
             else:
                 raise TypeError(
                     f'{loss_name} is not a tensor or list of tensors')
-        if self.distillation.parse_mode == 'regular':
-            loss = sum(_value for _key, _value in log_vars.items()
-                    if 'loss' in _key) 
-        elif self.distillation.parse_mode == 'SCKD':
-            loss = 0
-            decode_grad = self.get_grad(log_vars['decode.loss_seg'])
-            lambdas = {'decode.loss_seg':1}
-            for key,value in log_vars.items():
-                if 'loss' in key and 'decode' not in key:
-                    loss_grad = self.get_grad(log_vars[key])
-                    cos = loss_grad@decode_grad
-                    if cos>0:
-                        lambdas[key] = 1
-                    else:
-                        lambdas[key] = 0
-            loss = sum(_value*lambdas[_key] for _key, _value in log_vars.items()
-                    if 'loss' in _key) 
-        elif self.distillation.parse_mode == 'orthogonal':
-            loss = 0
-            decode_grad = self.get_grad(log_vars['decode.loss_seg']) # 主损失梯度
-            decode_grad_magnitude = decode_grad@decode_grad  # 主损失梯度的模长
-            decode_grad_direction = decode_grad/decode_grad_magnitude # 主损失梯度的方向
-
-            for key,value in log_vars.items():
-                if 'loss' in key and 'decode' not in key:
-                    distill_loss = log_vars[key]
-                    distill_loss.backward(retain_graph=True)
-                    for name,param in self.student.named_parameters():
-                        if param.grad is None:
-                            continue
-                        else:
-                           distill_grad = param.grad
-                           projection = distill_grad@decode_grad_direction*decode_grad_direction
-                           param.grad = -1*projection
-            loss = log_vars['decode.loss_seg']
+        
+        decode_loss = log_vars['decode.loss_seg']
+        distill_loss = loss = sum(_value for _key, _value in log_vars.items()
+                    if 'loss' in _key and 'decode' not in _key)
         log_vars['loss'] = loss
+
         for loss_name, loss_value in log_vars.items():
             # reduce loss when distributed training
             if dist.is_available() and dist.is_initialized():
                 loss_value = loss_value.data.clone()
                 dist.all_reduce(loss_value.div_(dist.get_world_size()))
             log_vars[loss_name] = loss_value.item()
+        
+        return decode_loss,distill_loss, log_vars, self.distillation.parse_mode
 
-        return loss, log_vars
+    def train_step(self, data_batch, optimizer, **kwargs):
+        losses = self(**data_batch)
+        decode_loss,distill_loss,log_vars,parse_mode = self._parse_losses(losses)
+
+        outputs = dict(
+            decode_loss=decode_loss,
+            distill_loss=distill_loss,
+            log_vars=log_vars,
+            parse_mode=parse_mode,
+            num_samples=len(data_batch['img'].data))
+
+        return outputs
 
     def slide_inference(self, img, img_meta, rescale):
         """Inference by sliding-window with overlap."""

@@ -10,7 +10,7 @@ log_config = dict(
         dict(type='TensorboardLoggerHook') 
         # dict(type='TextLoggerHook')
     ])
-work_dir = './work_dir/7.5/SCKD_baseline'
+work_dir = './work_dir/7.7/uncertainty_3'
 
 model = dict(
     distillation = dict(
@@ -20,8 +20,8 @@ model = dict(
         t_patterns=['backbone.layers.[013].blocks.[01].mlp.fc2',
                     'backbone.layers.[2].blocks.(0|17).mlp.fc2',
                     ],
-        weights_init_strategy='equal',
-        parse_mode='SCKD',
+        weights_init_strategy='self_adjust',
+        parse_mode='regular',
     ),
     s_pretrain = './checkpoints/swin_tiny_patch4_window7_224.pth',
     t_pretrain = './checkpoints/upernet_swin_base_patch4_window7_512x512.pth',
