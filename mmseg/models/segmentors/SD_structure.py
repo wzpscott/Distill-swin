@@ -11,6 +11,7 @@ from .base import BaseSegmentor
 import torch
 from collections import OrderedDict
 import numpy as np
+import random
 
 @SEGMENTORS.register_module()
 class SDModule_(BaseSegmentor):
@@ -47,7 +48,7 @@ class SDModule_(BaseSegmentor):
 
 
 
-        self.counter = {'total':0,'aux.loss_seg':0,'loss_backbone.layers.0.blocks.0.mlp.fc2':0,
+        self.avarage = {'cnt':0,'decode.loss_seg':0,'aux.loss_seg':0,'loss_backbone.layers.0.blocks.0.mlp.fc2':0,
         'loss_backbone.layers.0.blocks.1.mlp.fc2':0,'loss_backbone.layers.1.blocks.0.mlp.fc2':0,
          'loss_backbone.layers.1.blocks.1.mlp.fc2':0, 'loss_backbone.layers.2.blocks.0.mlp.fc2':0,
          'loss_backbone.layers.2.blocks.5.mlp.fc2':0,'loss_backbone.layers.3.blocks.0.mlp.fc2':0,
@@ -107,8 +108,6 @@ class SDModule_(BaseSegmentor):
                     new_state_dict[new_k] = v
                     
             self.student.load_state_dict(new_state_dict,strict=False)
-
-
         else:
             raise ValueError('Wrong student init strategy')
 
@@ -123,6 +122,30 @@ class SDModule_(BaseSegmentor):
                 grads = torch.cat([grads,param.grad.flatten()])
         self.student.zero_grad()
         return grads
+    # def _parse_losses(self,losses):
+    #     log_vars = OrderedDict()
+    #     for loss_name, loss_value in losses.items():
+    #         if isinstance(loss_value, torch.Tensor):
+    #             log_vars[loss_name] = loss_value.mean()
+    #         elif isinstance(loss_value, list):
+    #             log_vars[loss_name] = sum(_loss.mean() for _loss in loss_value)
+    #         else:
+    #             raise TypeError(
+    #                 f'{loss_name} is not a tensor or list of tensors')
+        
+    #     decode_loss = log_vars['decode.loss_seg']
+    #     distill_loss = sum(_value for _key, _value in log_vars.items()
+    #                 if 'loss' in _key and 'decode' not in _key)
+    #     # log_vars['loss'] = loss
+
+    #     for loss_name, loss_value in log_vars.items():
+    #         # reduce loss when distributed training
+    #         if dist.is_available() and dist.is_initialized():
+    #             loss_value = loss_value.data.clone()
+    #             dist.all_reduce(loss_value.div_(dist.get_world_size()))
+    #         log_vars[loss_name] = loss_value.item()
+        
+    #     return decode_loss,distill_loss, log_vars,self.distillation.parse_mode
     def _parse_losses(self,losses):
         log_vars = OrderedDict()
         for loss_name, loss_value in losses.items():
@@ -134,32 +157,155 @@ class SDModule_(BaseSegmentor):
                 raise TypeError(
                     f'{loss_name} is not a tensor or list of tensors')
         
-        decode_loss = log_vars['decode.loss_seg']
-        distill_loss = loss = sum(_value for _key, _value in log_vars.items()
-                    if 'loss' in _key and 'decode' not in _key)
-        log_vars['loss'] = loss
+        return log_vars,self.distillation.parse_mode
 
-        for loss_name, loss_value in log_vars.items():
+    def train_step(self, data_batch, optimizer, **kwargs):
+        losses = self(**data_batch)
+        log_vars,parse_mode = self._parse_losses(losses)
+
+        outputs = dict(
+            log_vars=log_vars,
+            parse_mode=parse_mode,
+            num_samples=len(data_batch['img'].data))
+        
+        self.set_grad(outputs)
+        
+        for loss_name, loss_value in outputs['log_vars'].items():
             # reduce loss when distributed training
             if dist.is_available() and dist.is_initialized():
                 loss_value = loss_value.data.clone()
                 dist.all_reduce(loss_value.div_(dist.get_world_size()))
             log_vars[loss_name] = loss_value.item()
-        
-        return decode_loss,distill_loss, log_vars, self.distillation.parse_mode
-
-    def train_step(self, data_batch, optimizer, **kwargs):
-        losses = self(**data_batch)
-        decode_loss,distill_loss,log_vars,parse_mode = self._parse_losses(losses)
-
-        outputs = dict(
-            decode_loss=decode_loss,
-            distill_loss=distill_loss,
-            log_vars=log_vars,
-            parse_mode=parse_mode,
-            num_samples=len(data_batch['img'].data))
-
         return outputs
+
+    def set_grad(self,outputs):
+        losses = outputs['log_vars']
+        mode = outputs['parse_mode']
+        loss_names = [k for k in losses]
+
+        if mode == 'regular':
+            loss = sum(_value for _key, _value in losses.items()
+                    if 'loss' in _key)
+            loss.backward()
+        elif mode == 'PCGrad':
+            random.shuffle(loss_names)
+
+            grads_PC = {}
+            for i,loss_name in enumerate(loss_names):
+                if 'loss' not in loss_name:
+                    continue
+                loss = losses[loss_name]
+                loss.backward(retain_graph=True)
+                for name,param in self.student.named_parameters():
+                    if param.grad is None:
+                        continue
+                    if name not in grads_PC:
+                        grads_PC[name] = param.grad
+                        continue
+
+                    projection = torch.sum(param.grad*grads_PC[name])
+                    if projection.item() < 0:
+                        project_direction = grads_PC[name]/torch.sum(grads_PC[name]**2)
+                        project_grad = project_direction*projection
+                        print(grads_PC[name]/param.grad)
+                        grads_PC[name] += (param.grad-project_grad)
+                    else:
+                        grads_PC[name] += param.grad
+                self.student.zero_grad()
+
+            for name,param in self.student.named_parameters():
+                param.grad = grads_PC[name]
+        elif mode == 'SCKD':
+            loss_names = [k for k in losses]
+
+            decode_grads = torch.Tensor([]).cuda()
+            decode_loss = losses['decode.loss_seg']
+            decode_loss.backward(retain_graph=True)
+            
+            for name,param in self.student.named_parameters():
+                if param.grad is None:
+                    decode_grads = torch.cat([decode_grads,torch.zeros(param.shape).flatten().cuda()])
+                else:
+                    decode_grads = torch.cat([decode_grads,param.grad.flatten()])
+            self.student.zero_grad()
+
+            survive_losses = {}
+            for loss_name in loss_names:
+                if loss_name == 'decode.loss_seg' or 'loss' not in loss_name:
+                    continue
+                loss = losses[loss_name]
+                loss.backward(retain_graph=True)
+                loss_grads = torch.Tensor([]).cuda()
+
+                for name,param in self.student.named_parameters():
+                    if param.grad is None:
+                        loss_grads = torch.cat([loss_grads,torch.zeros(param.shape).flatten().cuda()])
+                    else:
+                        loss_grads = torch.cat([loss_grads,param.grad.flatten()])
+                if torch.sum(loss_grads * decode_grads) > 0:
+                    survive_losses[loss_name] = loss
+                self.student.zero_grad()
+            
+            loss = sum([v for k,v in survive_losses.items() if 'loss' in loss_name])
+            loss += losses['decode.loss_seg']
+            loss.backward()  
+        elif mode == 'SCKD_param' :
+            decode_grads = {}
+            decode_loss = losses['decode.loss_seg']
+            decode_loss.backward(retain_graph=True)
+            for name,param in self.student.named_parameters():
+                if param.grad is None:
+                    continue
+                else:
+                    decode_grads[name] = param.grad
+            self.student.zero_grad()
+
+            distill_loss = sum([v for k,v in losses if 'loss' in k and 'decode' not in k ])
+            distill_loss.backward()
+            for name,param in self.student.named_parameters():
+                if param.grad is None:
+                    continue
+                elif decode_grads[name] is None:
+                    continue
+                else:
+                    decode_grad = decode_grads[name]
+                    distill_grad = param.grad
+                    if decode_grad @ distill_grad < 0:
+                        param.grad = decode_grad
+                    else:
+                        param.grad += decode_grad    
+        elif mode == 'dropout':
+            p = 0.1
+            survive_losses = {}
+            for loss_name in loss_names:
+                if 'loss' not in loss_name or 'decode' in loss_name:
+                    continue
+                if random.uniform(0,1) > p:
+                    survive_losses[loss_name] = losses[loss_name]
+            loss = sum((1/(1-p))*v for k,v in survive_losses )
+            loss += losses['decode.loss_seg']
+            loss.backward()
+        elif mode == 'grad_scale':
+            decode_grads_mag = {}
+            decode_loss = losses['decode.loss_seg']
+            decode_loss.backward(retain_graph=True)
+            for name,param in self.student.named_parameters():
+                if param.grad is None:
+                    continue
+                else:
+                    decode_grads_mag[name] = torch.sqrt(torch.sum(param.grad*param.grad))
+            self.student.zero_grad()
+
+            loss = sum([v for k,v in losses if 'loss' in k])
+            loss.backward()
+            for name,param in self.student.named_parameters():
+                if name not in decode_grads_mag:
+                    continue
+                else:
+                    mag = torch.sqrt(torch.sum(param.grad*param.grad))
+                    param.grad = (decode_grads_mag[name]/mag)*param.grad
+        else:
+            raise NotImplementedError()
 
     def slide_inference(self, img, img_meta, rescale):
         """Inference by sliding-window with overlap."""

@@ -181,7 +181,8 @@ class DistillationLoss_(nn.Module):
             raise ValueError('Wrong weights init strategy')
 
     def forward(self, soft, pred, losses):
-        ws = F.softmax(1/(torch.log(self.weights_2))**2)
+        if self.strategy=='self_adjust':
+            ws = F.softmax(1/(torch.log(self.weights_2))**2)
         for i in range(len(pred)):
             adaptor=self.adaptors[i]
             pred[i] = pred[i].permute(0,2,1)
@@ -200,17 +201,24 @@ class DistillationLoss_(nn.Module):
 
             maxpool = nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0,
                                     ceil_mode=True)
-            # loss = self.weights[i]*self.kd_loss(maxpool(pred[i]), maxpool(soft[i]))
 
-            loss = self.weights_1[i]*ws[i]*\
-                    self.kd_loss(maxpool(pred[i]), maxpool(soft[i]))\
-                    +torch.log(self.weights_2[i])
-            name = self.layers[i]
-            losses.update({'loss_'+name: loss})
-            losses.update({'weight_'+name: self.weights_2[i]})
-        losses['decode.loss_seg'] = ws[8]*losses['decode.loss_seg']+torch.log(self.weights_2[8])
-        losses['aux.loss_seg'] = ws[9]*losses['decode.loss_seg']+torch.log(self.weights_2[9])
+            if self.strategy=='equal':
+                loss = self.weights[i]*self.kd_loss(maxpool(pred[i]), maxpool(soft[i]))
+                name = self.layers[i]
+                losses.update({'loss_'+name: loss})
+            elif self.strategy=='self_adjust':
+                loss = self.weights_1[i]*ws[i]*\
+                        self.kd_loss(maxpool(pred[i]), maxpool(soft[i]))\
+                        +torch.log(self.weights_2[i])
+                name = self.layers[i]
+                losses.update({'loss_'+name: loss})
+                losses.update({'weight_'+name: self.weights_2[i]})
+        if self.strategy=='equal':
+            pass
+        elif self.strategy=='self_adjust':
+            losses['decode.loss_seg'] = ws[8]*losses['decode.loss_seg']+torch.log(self.weights_2[8])
+            losses['aux.loss_seg'] = ws[9]*losses['decode.loss_seg']+torch.log(self.weights_2[9])
 
-        losses.update({'weight_'+'decode.loss_seg': self.weights_2[8]})
-        losses.update({'weight_'+'aux.loss_seg': self.weights_2[9]})
+            losses.update({'weight_'+'decode.loss_seg': self.weights_2[8]})
+            losses.update({'weight_'+'aux.loss_seg': self.weights_2[9]})
         return losses
