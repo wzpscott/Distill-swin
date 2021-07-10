@@ -135,9 +135,10 @@ class Adaptor(nn.Module):
         #     nn.GELU(),
         #     nn.Conv1d(output_size,output_size, kernel_size=1, stride=1, padding=0),
         # )
-        self.ff = nn.Conv1d(input_size,output_size, kernel_size=1, stride=1, padding=0)
+        # self.ff = nn.Conv1d(input_size,output_size, kernel_size=1, stride=1, padding=0)
     def forward(self,x):
-        return self.ff(x)
+        # return self.ff(x)
+        return x
 
 class DistillationLoss_(nn.Module):
     def __init__(self, s_cfg, t_cfg,s_shapes,t_shapes,distillation,layers):
@@ -145,6 +146,7 @@ class DistillationLoss_(nn.Module):
         self.kd_loss = CriterionKDMSE()
 
         self.adaptors = nn.ModuleList()
+        
         self.s_norms = nn.ModuleList()
         self.t_norms = nn.ModuleList()
 
@@ -165,13 +167,13 @@ class DistillationLoss_(nn.Module):
         # add gradients to weight of each layer's loss
         self.strategy = distillation['weights_init_strategy']
         if self.strategy=='equal':
-            weights = [1e6,1e6,1e6,1e6,1e5,1e5,1e3,1e3]
+            weights = [1e6,1e6,1e5,1e5,1e4,1e4,1e3,1e3]
             weights = nn.Parameter(torch.Tensor(weights),requires_grad=False)
             self.weights = weights
         elif self.strategy=='weight_average':
             self.sd_weight = nn.Parameter(torch.Tensor([0.8]),requires_grad=True)
         elif self.strategy=='self_adjust':
-            weights_1 = [1e6,1e6,1e6,1e6,1e5,1e5,1e3,1e3,1,1]
+            weights_1 = [1e8,1e8,1e6,1e6,1e6,1e3,1e3,1e3,1,1]
             weights_1 = nn.Parameter(torch.Tensor(weights_1),requires_grad=False)
             self.weights_1 = weights_1
 

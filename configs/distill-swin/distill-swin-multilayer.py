@@ -10,7 +10,7 @@ log_config = dict(
         dict(type='TensorboardLoggerHook') 
         # dict(type='TextLoggerHook')
     ])
-work_dir = './work_dir/orthogonal/SCKD'
+work_dir = './work_dir/7.9/distill'
 
 model = dict(
     distillation = dict(
@@ -21,10 +21,10 @@ model = dict(
                     'backbone.layers.[2].blocks.(0|17).mlp.fc2',
                     ],
         weights_init_strategy='equal',
-        parse_mode='SCKD',
+        parse_mode='regular',
     ),
     s_pretrain = './checkpoints/swin_tiny_patch4_window7_224.pth',
-    t_pretrain = './checkpoints/upernet_swin_base_patch4_window7_512x512.pth',
+    t_pretrain = './checkpoints/upernet_swin_small_patch4_window7_512x512.pth',
 )
 optimizer = dict(_delete_=True, type='AdamW', lr=0.00006, betas=(0.9, 0.999), weight_decay=0.01,
                 )

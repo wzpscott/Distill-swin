@@ -48,13 +48,14 @@ class SDModule_(BaseSegmentor):
 
 
 
-        self.avarage = {'cnt':0,'decode.loss_seg':0,'aux.loss_seg':0,'loss_backbone.layers.0.blocks.0.mlp.fc2':0,
-        'loss_backbone.layers.0.blocks.1.mlp.fc2':0,'loss_backbone.layers.1.blocks.0.mlp.fc2':0,
-         'loss_backbone.layers.1.blocks.1.mlp.fc2':0, 'loss_backbone.layers.2.blocks.0.mlp.fc2':0,
-         'loss_backbone.layers.2.blocks.5.mlp.fc2':0,'loss_backbone.layers.3.blocks.0.mlp.fc2':0,
-         'loss_backbone.layers.3.blocks.1.mlp.fc2':0
-        }
-        
+        # self.avarage = {'cnt':0,'decode.loss_seg':0,'aux.loss_seg':0,'loss_backbone.layers.0.blocks.0.mlp.fc2':0,
+        # 'loss_backbone.layers.0.blocks.1.mlp.fc2':0,'loss_backbone.layers.1.blocks.0.mlp.fc2':0,
+        #  'loss_backbone.layers.1.blocks.1.mlp.fc2':0, 'loss_backbone.layers.2.blocks.0.mlp.fc2':0,
+        #  'loss_backbone.layers.2.blocks.5.mlp.fc2':0,'loss_backbone.layers.3.blocks.0.mlp.fc2':0,
+        #  'loss_backbone.layers.3.blocks.1.mlp.fc2':0
+        # }
+        self.avarage_scale = OrderedDict()
+        self.avarage_scale['cnt'] = 0
 
     def forward_train(self, img, img_metas, gt_semantic_seg):
         loss_dict = self.student(img, img_metas, return_loss=True, gt_semantic_seg=gt_semantic_seg)
@@ -257,32 +258,33 @@ class SDModule_(BaseSegmentor):
                 if param.grad is None:
                     continue
                 else:
+                    print(1)
                     decode_grads[name] = param.grad
             self.student.zero_grad()
 
-            distill_loss = sum([v for k,v in losses if 'loss' in k and 'decode' not in k ])
+            distill_loss = sum([v for k,v in losses.items() if ('loss' in k) and ('decode' not in k) ])
             distill_loss.backward()
             for name,param in self.student.named_parameters():
                 if param.grad is None:
                     continue
-                elif decode_grads[name] is None:
-                    continue
+                elif name not in decode_grads:
+                    continue 
                 else:
                     decode_grad = decode_grads[name]
                     distill_grad = param.grad
-                    if decode_grad @ distill_grad < 0:
+                    if torch.sum(decode_grad * distill_grad).item() < 0:
                         param.grad = decode_grad
                     else:
-                        param.grad += decode_grad    
+                        param.grad = decode_grad + distill_grad
         elif mode == 'dropout':
-            p = 0.1
+            p = 0.3
             survive_losses = {}
             for loss_name in loss_names:
                 if 'loss' not in loss_name or 'decode' in loss_name:
                     continue
                 if random.uniform(0,1) > p:
                     survive_losses[loss_name] = losses[loss_name]
-            loss = sum((1/(1-p))*v for k,v in survive_losses )
+            loss = sum((1/(1-p))*v for k,v in survive_losses.items() )
             loss += losses['decode.loss_seg']
             loss.backward()
         elif mode == 'grad_scale':
@@ -296,14 +298,32 @@ class SDModule_(BaseSegmentor):
                     decode_grads_mag[name] = torch.sqrt(torch.sum(param.grad*param.grad))
             self.student.zero_grad()
 
-            loss = sum([v for k,v in losses if 'loss' in k])
-            loss.backward()
+            loss = sum([v for k,v in losses.items() if ('loss' in k) and ('decode' not in k) and ('aux' not in k)])
+            loss.backward(retain_graph=True)
+
             for name,param in self.student.named_parameters():
                 if name not in decode_grads_mag:
                     continue
                 else:
                     mag = torch.sqrt(torch.sum(param.grad*param.grad))
-                    param.grad = (decode_grads_mag[name]/mag)*param.grad
+                    if mag.item() == 0:
+                        continue
+                    tmp = decode_grads_mag[name]/mag
+                    if tmp.item() < 1:
+                        param.grad = tmp*param.grad
+            loss = losses['decode.loss_seg']+losses['aux.loss_seg']
+            loss.backward()
+
+            #         if name not in self.avarage_scale:
+            #             self.avarage_scale[name] = tmp
+            #         else:
+            #             self.avarage_scale[name] += tmp
+            # self.avarage_scale['cnt'] += 1
+            # if self.avarage_scale['cnt']+1%10000:
+            #     for k,v in self.avarage_scale.items():
+            #         print(k,v/self.avarage_scale['cnt'])
+            #     print('----------------------------------------------------------\n')
+                    # param.grad = (decode_grads_mag[name]/mag)*param.grad
         else:
             raise NotImplementedError()
 
