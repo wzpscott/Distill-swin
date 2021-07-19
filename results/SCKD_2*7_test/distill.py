@@ -93,8 +93,8 @@ model = dict(
         layers=[[
             'decode_head.conv_seg', 'decode_head.conv_seg', [150, 150], 2
         ]],
-        weights_init_strategy='self_adjust',
-        parse_mode='regular'),
+        weights_init_strategy='equal',
+        parse_mode='SCKD'),
     s_pretrain='./checkpoints/swin_tiny_patch4_window7_224.pth',
     t_pretrain='./checkpoints/upernet_swin_base_patch4_window7_512x512.pth',
     train_cfg=dict(),
@@ -228,5 +228,5 @@ lr_config = dict(
 runner = dict(type='IterBasedRunner', max_iters=40000)
 checkpoint_config = dict(by_epoch=False, interval=4000)
 evaluation = dict(interval=2000, metric='mIoU')
-work_dir = './results/CA_self_adjust'
+work_dir = './results/SCKD_2*7_test'
 gpu_ids = range(0, 1)

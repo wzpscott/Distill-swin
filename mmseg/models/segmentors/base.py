@@ -118,6 +118,7 @@ class BaseSegmentor(nn.Module):
         should be double nested (i.e.  List[Tensor], List[List[dict]]), with
         the outer list indicating test time augmentations.
         """
+        
         if return_loss:
             return self.forward_train(img, img_metas, **kwargs)
         else:
