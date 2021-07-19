@@ -12,6 +12,7 @@ import torch
 from collections import OrderedDict
 import numpy as np
 import random
+import copy
 
 @SEGMENTORS.register_module()
 class SDModule_(BaseSegmentor):
@@ -20,42 +21,34 @@ class SDModule_(BaseSegmentor):
         super(SDModule_, self).__init__()
         self.cfg_s = cfg
         self.cfg_t = cfg_t
+        self.distillation = distillation
+
         self.teacher = builder.build_segmentor(
             cfg_t, train_cfg=train_cfg, test_cfg=test_cfg)
         self.teacher.load_state_dict(torch.load(
             t_pretrain)['state_dict'])
-
         self.teacher.eval()
         for param in self.teacher.parameters():
             param.requires_grad = False
+
         self.student = builder.build_segmentor(
             cfg, train_cfg=train_cfg, test_cfg=test_cfg)
         self.student_init(strategy='use_pretrain',s_pretrain=s_pretrain,t_pretrain=t_pretrain)
 
-        self.s_fea = Extractor(self.student, distillation.s_patterns)
-        self.t_fea = Extractor(self.teacher, distillation.t_patterns)
-
-        self.layers = self.s_fea.extracted_layers
-
-        self.distillation = distillation
+        self.features = Extractor(self.student,self.teacher,distillation.layers)
         
-        self.loss = DistillationLoss_(s_cfg=cfg, t_cfg=cfg_t,
-                                    s_shapes=self.s_fea.shape,t_shapes=self.t_fea.shape,
-                                    distillation = distillation,layers=self.layers,
-                                    )
+        self.loss = DistillationLoss_(distillation = distillation)
         self.align_corners = False
         self.test_mode = 'whole'
 
+        self.m = {'m_decode':{},'m_soft':{},'m_aux':{}}
+        self.v = {'v_decode':{},'v_soft':{},'v_aux':{}}
 
-
-        # self.avarage = {'cnt':0,'decode.loss_seg':0,'aux.loss_seg':0,'loss_backbone.layers.0.blocks.0.mlp.fc2':0,
-        # 'loss_backbone.layers.0.blocks.1.mlp.fc2':0,'loss_backbone.layers.1.blocks.0.mlp.fc2':0,
-        #  'loss_backbone.layers.1.blocks.1.mlp.fc2':0, 'loss_backbone.layers.2.blocks.0.mlp.fc2':0,
-        #  'loss_backbone.layers.2.blocks.5.mlp.fc2':0,'loss_backbone.layers.3.blocks.0.mlp.fc2':0,
-        #  'loss_backbone.layers.3.blocks.1.mlp.fc2':0
-        # }
-        self.avarage_scale = OrderedDict()
-        self.avarage_scale['cnt'] = 0
+        for name,param in self.student.named_parameters():
+            for k in self.m:
+                self.m[k][name] = torch.zeros(param.shape).cuda()
+            for k in self.v:
+                self.v[k][name] = torch.zeros(param.shape).cuda()
 
     def forward_train(self, img, img_metas, gt_semantic_seg):
         loss_dict = self.student(img, img_metas, return_loss=True, gt_semantic_seg=gt_semantic_seg)
@@ -63,22 +56,19 @@ class SDModule_(BaseSegmentor):
             _ = self.teacher(img, img_metas, return_loss=True, gt_semantic_seg=gt_semantic_seg)
         del _
 
-
         softs_fea = []
         preds_fea = []
 
-        for i in range(len(self.s_fea.feat)):
-            soft = self.t_fea.feat[i]
-            pred = self.s_fea.feat[i]
-
+        for i in range(len(self.features.teacher_features)):
+            soft = self.features.student_features[i]
+            pred = self.features.teacher_features[i]
             softs_fea.append(soft)
             preds_fea.append(pred)
 
         loss_dict = self.loss(softs_fea, preds_fea, loss_dict)
 
-        self.t_fea.feat = []
-        self.s_fea.feat = []
-
+        self.features.student_features = []
+        self.features.teacher_features = []
         return loss_dict
     
     def student_init(self,strategy,s_pretrain=None,t_pretrain=None,distillation=None):
@@ -112,41 +102,6 @@ class SDModule_(BaseSegmentor):
         else:
             raise ValueError('Wrong student init strategy')
 
-    def get_grad(self,loss):
-        loss.backward(retain_graph=True)
-        grads = torch.Tensor([]).cuda()
-        for name,param in self.student.named_parameters():
-            if param.grad is None:
-                grad = torch.zeros(param.shape).cuda()
-                grads = torch.cat([grads,grad.flatten()])
-            else:
-                grads = torch.cat([grads,param.grad.flatten()])
-        self.student.zero_grad()
-        return grads
-    # def _parse_losses(self,losses):
-    #     log_vars = OrderedDict()
-    #     for loss_name, loss_value in losses.items():
-    #         if isinstance(loss_value, torch.Tensor):
-    #             log_vars[loss_name] = loss_value.mean()
-    #         elif isinstance(loss_value, list):
-    #             log_vars[loss_name] = sum(_loss.mean() for _loss in loss_value)
-    #         else:
-    #             raise TypeError(
-    #                 f'{loss_name} is not a tensor or list of tensors')
-        
-    #     decode_loss = log_vars['decode.loss_seg']
-    #     distill_loss = sum(_value for _key, _value in log_vars.items()
-    #                 if 'loss' in _key and 'decode' not in _key)
-    #     # log_vars['loss'] = loss
-
-    #     for loss_name, loss_value in log_vars.items():
-    #         # reduce loss when distributed training
-    #         if dist.is_available() and dist.is_initialized():
-    #             loss_value = loss_value.data.clone()
-    #             dist.all_reduce(loss_value.div_(dist.get_world_size()))
-    #         log_vars[loss_name] = loss_value.item()
-        
-    #     return decode_loss,distill_loss, log_vars,self.distillation.parse_mode
     def _parse_losses(self,losses):
         log_vars = OrderedDict()
         for loss_name, loss_value in losses.items():
@@ -176,46 +131,134 @@ class SDModule_(BaseSegmentor):
             if dist.is_available() and dist.is_initialized():
                 loss_value = loss_value.data.clone()
                 dist.all_reduce(loss_value.div_(dist.get_world_size()))
-            log_vars[loss_name] = loss_value.item()
+
+            if 'num' in loss_name or 'count' in loss_name:
+                log_vars[loss_name] = loss_value
+            else:
+                log_vars[loss_name] = loss_value.item()
         return outputs
 
+    def or_decomposition(self,u,v):
+        if torch.count_nonzero(v) == 0:
+            return u
+        return u-(u.flatten()@v.flatten())/(v.flatten()@v.flatten())*v
+    def get_grad(self,loss):
+        loss.backward(retain_graph=True)
+        grads = {}
+        for name,param in self.student.named_parameters():
+            if param.grad is None:
+                grads[name] = torch.zeros(param.shape).cuda()
+            else:
+                grads[name] = param.grad.clone()
+        self.student.zero_grad()
+        return grads
+    def flat_grad(self,grads):
+        tmp = [v.flatten() for k,v in grads.items()]
+        return torch.cat(tmp)
+    def cos(self,u,v):
+        return (u@v)/(torch.sqrt(v@v)*torch.sqrt(u@u))
+    def mag(self,u):
+        u = u.flatten()
+        return torch.sqrt((u@u))
+    def unit(self,u):
+        if torch.count_nonzero(u) == 0:
+            return u
+        return u/self.mag(u)
     def set_grad(self,outputs):
         losses = outputs['log_vars']
         mode = outputs['parse_mode']
-        loss_names = [k for k in losses]
+        loss_names = [k for k in losses if 'loss' in k]
 
         if mode == 'regular':
             loss = sum(_value for _key, _value in losses.items()
                     if 'loss' in _key)
             loss.backward()
         elif mode == 'PCGrad':
-            random.shuffle(loss_names)
+            g = {}
+            g_pc = {}
 
-            grads_PC = {}
             for i,loss_name in enumerate(loss_names):
-                if 'loss' not in loss_name:
-                    continue
                 loss = losses[loss_name]
                 loss.backward(retain_graph=True)
+
+                g[loss_name] = {}
+                g_pc[loss_name] = {}
+
                 for name,param in self.student.named_parameters():
                     if param.grad is None:
-                        continue
-                    if name not in grads_PC:
-                        grads_PC[name] = param.grad
-                        continue
-
-                    projection = torch.sum(param.grad*grads_PC[name])
-                    if projection.item() < 0:
-                        project_direction = grads_PC[name]/torch.sum(grads_PC[name]**2)
-                        project_grad = project_direction*projection
-                        print(grads_PC[name]/param.grad)
-                        grads_PC[name] += (param.grad-project_grad)
+                        g[loss_name][name] = torch.zeros(param.shape).cuda()
                     else:
-                        grads_PC[name] += param.grad
+                        g[loss_name][name] = copy.deepcopy(param.grad)
+                    g_pc[loss_name][name] = g[loss_name][name]
                 self.student.zero_grad()
 
+
+            for i in range(len(loss_names)):
+                loss_i = loss_names[i]
+                order = [i for i in range(len(loss_names))]
+                random.shuffle(order)
+                for j in order:
+                    loss_j = loss_names[j]
+                    if i == j:
+                        continue
+
+                    proj = 0
+                    for k in g[loss_i]:
+                        proj += torch.sum(g_pc[loss_i][k]*g[loss_j][k])
+                    if proj.item() < 0:
+                        mag = 0
+                        for k in g[loss_i]:
+                            mag += torch.sum(g[loss_j][k]*g[loss_j][k])
+
+                        for k in g[loss_i]:
+                            g_pc[loss_i][k] -= (proj / mag * g[loss_j][k])
             for name,param in self.student.named_parameters():
-                param.grad = grads_PC[name]
+                for loss_name in g_pc:
+                    param.grad += g_pc[loss_name][name]
+        elif mode == 'PCGrad_decode':
+            g = {}
+            g_pc = {}
+
+            for i,loss_name in enumerate(loss_names):
+                loss = losses[loss_name]
+                loss.backward(retain_graph=True)
+
+                g[loss_name] = {}
+                g_pc[loss_name] = {}
+
+                for name,param in self.student.named_parameters():
+                    if param.grad is None:
+                        g[loss_name][name] = torch.zeros(param.shape).cuda()
+                    else:
+                        g[loss_name][name] = copy.deepcopy(param.grad)
+                    g_pc[loss_name][name] = g[loss_name][name]
+                self.student.zero_grad()
+
+
+            for i in range(len(loss_names)):
+                loss_i = loss_names[i]
+                if loss_i == 'decode.loss_seg':
+                    continue
+                order = [i for i in range(len(loss_names))]
+                random.shuffle(order)
+                for j in order:
+                    loss_j = loss_names[j]
+                    if i == j:
+                        continue
+
+                    proj = 0
+                    for k in g[loss_i]:
+                        proj += torch.sum(g_pc[loss_i][k]*g[loss_j][k])
+                    if proj.item() < 0:
+                        mag = 0
+                        for k in g[loss_i]:
+                            mag += torch.sum(g[loss_j][k]*g[loss_j][k])
+
+                        for k in g[loss_i]:
+                            g_pc[loss_i][k] -= (proj / mag * g[loss_j][k])
+            for name,param in self.student.named_parameters():
+                for loss_name in g_pc:
+                    param.grad += g_pc[loss_name][name]
         elif mode == 'SCKD':
             loss_names = [k for k in losses]
 
@@ -245,8 +288,19 @@ class SDModule_(BaseSegmentor):
                         loss_grads = torch.cat([loss_grads,param.grad.flatten()])
                 if torch.sum(loss_grads * decode_grads) > 0:
                     survive_losses[loss_name] = loss
+                else:
+                    if 'SCKD_count_'+loss_name in self.SCKD_count:
+                        self.SCKD_count['SCKD_count_'+loss_name] += 1
+                    else:
+                        self.SCKD_count['SCKD_count_'+loss_name] = 1
+                self.SCKD_count['SCKD_count_total'] += 1
                 self.student.zero_grad()
             
+            for k in self.SCKD_count:
+                if 'total' not in k:
+                   self.SCKD_count[k] /= self.SCKD_count['SCKD_count_total'] 
+            # outputs['log_vars'].update(self.SCKD_count)
+
             loss = sum([v for k,v in survive_losses.items() if 'loss' in loss_name])
             loss += losses['decode.loss_seg']
             loss.backward()  
@@ -258,7 +312,6 @@ class SDModule_(BaseSegmentor):
                 if param.grad is None:
                     continue
                 else:
-                    print(1)
                     decode_grads[name] = param.grad
             self.student.zero_grad()
 
@@ -276,8 +329,49 @@ class SDModule_(BaseSegmentor):
                         param.grad = decode_grad
                     else:
                         param.grad = decode_grad + distill_grad
+        elif mode == 'SCKD_sigmoid':
+            grads = {}
+
+            decode_grads = torch.Tensor([]).cuda()
+            decode_loss = losses['decode.loss_seg']
+            decode_loss.backward(retain_graph=True)
+            
+            for name,param in self.student.named_parameters():
+                if param.grad is None:
+                    decode_grads = torch.cat([decode_grads,torch.zeros(param.shape).flatten().cuda()])
+                    grads['name'] == torch.zeros(param.shape).cuda()
+                else:
+                    decode_grads = torch.cat([decode_grads,param.grad.flatten()])
+                    grads['name'] == param.grad
+            self.student.zero_grad()
+
+            survive_losses = {}
+            for loss_name in loss_names:
+                if loss_name == 'decode.loss_seg' or 'loss' not in loss_name:
+                    continue
+                loss = losses[loss_name]
+                loss.backward(retain_graph=True)
+                loss_grads = torch.Tensor([]).cuda()
+
+                for name,param in self.student.named_parameters():
+                    if param.grad is None:
+                        loss_grads = torch.cat([loss_grads,torch.zeros(param.shape).flatten().cuda()])
+                    else:
+                        loss_grads = torch.cat([loss_grads,param.grad.flatten()])
+                
+                cos = torch.sum(loss_grads * decode_grads)/torch.sqrt((torch.sum(loss_grads * loss_grads)*\
+                                                            torch.sum(decode_grads * decode_grads)))
+                weight = F.sigmoid(cos)
+                if weight > 0:
+                    for name,param in self.student.named_parameters():
+                        if param.grad is not None:
+                            grads['name'] += param.grad
+                self.student.zero_grad()
+            for name,param in self.student.named_parameters():
+                param.grad = grads[name]
+
         elif mode == 'dropout':
-            p = 0.3
+            p = 0.5
             survive_losses = {}
             for loss_name in loss_names:
                 if 'loss' not in loss_name or 'decode' in loss_name:
@@ -288,44 +382,128 @@ class SDModule_(BaseSegmentor):
             loss += losses['decode.loss_seg']
             loss.backward()
         elif mode == 'grad_scale':
-            decode_grads_mag = {}
             decode_loss = losses['decode.loss_seg']
-            decode_loss.backward(retain_graph=True)
+            soft_loss = losses['loss_decode_head.conv_seg']
+            aux_loss = losses['aux.loss_seg']
+
+            decode_grad = self.get_grad(decode_loss)
+            soft_grad = self.get_grad(soft_loss)
+            aux_grad = self.get_grad(aux_loss)
+
+            decode_grad_flat = self.flat_grad(decode_grad)
+            soft_grad_flat = self.flat_grad(soft_grad)
+            aux_grad_flat = self.flat_grad(aux_grad)
+
+            losses['mag_decode'] = self.mag(decode_grad_flat)
+            losses['mag_soft'] = self.mag(soft_grad_flat)
+            losses['mag_aux'] = self.mag(aux_grad_flat)
+            w_decode = losses['mag_decode']/(losses['mag_decode']+losses['mag_soft']+losses['mag_aux'])
+            w_soft = losses['mag_soft']/(losses['mag_decode']+losses['mag_soft']+losses['mag_aux'])
+            w_aux = losses['mag_aux']/(losses['mag_decode']+losses['mag_soft']+losses['mag_aux'])
+
+            losses['cos_decode_soft'] = self.cos(decode_grad_flat,soft_grad_flat)
+            losses['cos_aux_soft'] = self.cos(soft_grad_flat,aux_grad_flat)
+            losses['cos_decode_aux'] = self.cos(decode_grad_flat,aux_grad_flat)
+
+            losses['mag_soft_or'] = self.mag(self.or_decomposition(soft_grad_flat,decode_grad_flat))
+            losses['mag_aux_or'] = self.mag(self.or_decomposition(\
+            self.or_decomposition(aux_grad_flat,decode_grad_flat),self.or_decomposition(soft_grad_flat,decode_grad_flat)\
+            ))
+
             for name,param in self.student.named_parameters():
-                if param.grad is None:
-                    continue
-                else:
-                    decode_grads_mag[name] = torch.sqrt(torch.sum(param.grad*param.grad))
-            self.student.zero_grad()
+                decode = decode_grad[name]
+                aux = aux_grad[name]
+                soft = aux_grad[name]
 
-            loss = sum([v for k,v in losses.items() if ('loss' in k) and ('decode' not in k) and ('aux' not in k)])
-            loss.backward(retain_graph=True)
+                param.grad = torch.zeros(param.shape).cuda()
+
+                if torch.count_nonzero(decode) > 0:
+                    param.grad += w_decode*decode
+                    print(1)
+                else:
+                    print(2)
+                if torch.count_nonzero(aux) > 0:
+                    param.grad += w_aux*aux
+                if torch.count_nonzero(soft) > 0:
+                    param.grad += w_soft*soft
+
+        elif mode == 'adam':
+
+            beta_1 = 0.5
+            beta_2 = 0.5
+            eps = 1e-8
+
+            decode_loss = losses['decode.loss_seg']
+            soft_loss = losses['loss_decode_head.conv_seg']
+            aux_loss = losses['aux.loss_seg']
+
+            names = ['decode','soft','aux']
+            for i,l in enumerate([decode_loss,soft_loss,aux_loss]):
+                l.backward(retain_graph=True)
+                for name,param in self.student.named_parameters(): 
+                    if param.grad is None:
+                        g_t = torch.zeros(param.shape).cuda()
+                    else:
+                        g_t = param.grad
+                    
+                    self.m['m_'+names[i]][name] = beta_1*self.m['m_'+names[i]][name] + (1-beta_1)*g_t
+                    self.v['v_'+names[i]][name] = beta_2*self.v['v_'+names[i]][name] + (1-beta_2)*(g_t**2)
+                self.student.zero_grad()
+            
+            for name,param in self.student.named_parameters():
+                param.grad = self.m['m_decode'][name] + \
+                                self.m['m_soft'][name] +\
+                                self.m['m_aux'][name]
+
+            for k in self.m:
+                # print(self.flat_grad(self.m[k]).unsqueeze(0).mean())
+                outputs['log_vars'].update({k:self.flat_grad(self.m[k]).unsqueeze(0).mean()})
+            for k in self.v:
+                outputs['log_vars'].update({k:self.flat_grad(self.v[k]).unsqueeze(0).mean()})
+                
+        elif mode == 'grad_inspect':
+            mags = {}
+            grads = {}
+            for loss_name in losses:
+                if 'loss' not in loss_name:
+                    continue
+                
+                param_nums['nums_'+loss_name] = 0
+                flat_grads = torch.Tensor([]).cuda()
+                loss = losses[loss_name]
+                loss.backward(retain_graph=True)
+                for name,param in self.student.named_parameters():
+                    if param.grad is None:
+                        flat_grads = torch.cat([flat_grads,torch.zeros(param.shape).flatten().cuda()])
+                    else:
+                        flat_grads = torch.cat([flat_grads,param.grad.flatten()])
+                        if not torch.count_nonzero(param.grad.flatten()) == 0:
+                            self.param_nums['nums_'+loss_name] += param.grad.flatten().shape[0]
+
+                        if name in grads:
+                            grads[name] += param.grad
+                        else:
+                            grads[name] = param.grad
+
+                mag = self.get_mag(flat_grads)
+                mags['mag_'+loss_name] = mag/param_nums['nums_'+loss_name]
+
+                self.student.zero_grad()
+        
+            outputs['log_vars'].update(mags)
+            outputs['log_vars'].update(param_nums)
 
             for name,param in self.student.named_parameters():
-                if name not in decode_grads_mag:
-                    continue
-                else:
-                    mag = torch.sqrt(torch.sum(param.grad*param.grad))
-                    if mag.item() == 0:
-                        continue
-                    tmp = decode_grads_mag[name]/mag
-                    if tmp.item() < 1:
-                        param.grad = tmp*param.grad
-            loss = losses['decode.loss_seg']+losses['aux.loss_seg']
-            loss.backward()
-
-            #         if name not in self.avarage_scale:
-            #             self.avarage_scale[name] = tmp
-            #         else:
-            #             self.avarage_scale[name] += tmp
-            # self.avarage_scale['cnt'] += 1
-            # if self.avarage_scale['cnt']+1%10000:
-            #     for k,v in self.avarage_scale.items():
-            #         print(k,v/self.avarage_scale['cnt'])
-            #     print('----------------------------------------------------------\n')
-                    # param.grad = (decode_grads_mag[name]/mag)*param.grad
+                param.grad = grads[name]
+                # param.grad = grads[name]/param_nums['nums_'+loss_name] 
+                # if 'decode' not in name and 'aux' in name:
+                #     param.grad *= 5
+        elif mode == 'grad_weight':
+            pass
         else:
             raise NotImplementedError()
+    def get_mag(self,grad):
+        return torch.sqrt(torch.sum(grad*grad))
 
     def slide_inference(self, img, img_meta, rescale):
         """Inference by sliding-window with overlap."""

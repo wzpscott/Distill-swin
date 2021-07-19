@@ -30,35 +30,35 @@ class FeatureExtractor(nn.Module):
 
 
 class Extractor(nn.Module):
-    def __init__(self, submodule, patterns):
-        super(Extractor, self).__init__()
-        sub_modules_names = [name for name,_ in submodule.named_modules()]
-        self.extracted_layers = []
-        for name in sub_modules_names:
-            for pat in patterns:
-                if re.match(pat,name):
-                    self.extracted_layers.append(name)
-                    break
+    def __init__(self, teacher, student, layers):
+        super().__init__()
 
-        self.feat = []
-        self.shape = []
-        self.layers = []
+        self.teacher_features = []
+        self.student_features = []
+        self.channel_dims = []  # student 和 teacher 被提取层的输出通道数
+        self.total_dims = []  # student 和 teacher 被提取层的输出维数
 
-        sub_modules = submodule.named_modules()
-        for name, module in sub_modules:
-            if name in self.extracted_layers:
-                if 'fc' in name:
-                    out_dim = module.out_features
-                else:
-                    out_dim = 16
-                self.shape.append(out_dim)
-                self.layers.append(name)
-                module.register_forward_hook(partial(self.hook_fn_forward, name=name))
+        for student_layer,teacher_layer,channel_dim,total_dim in layers:
+            self.channel_dims.append(channel_dim)
+            self.total_dims.append(total_dim)
 
-    def hook_fn_forward(self, module, input, output, name):
+            for name, module in teacher.named_modules():
+                if name == teacher_layer:
+                    module.register_forward_hook(partial(self.hook_fn_forward, name=name, type='teacher'))
+                    print(f'teacher_layer :{teacher_layer} hooked!!!!')
+
+            for name, module in student.named_modules():
+                if name == student_layer:
+                    module.register_forward_hook(partial(self.hook_fn_forward, name=name, type='student'))
+                    print(f'student_layer :{student_layer} hooked!!!!')
+
+
+    def hook_fn_forward(self, module, input, output, name, type):
         if self.training == True:
-            self.feat.append(output)
-
+            if type == 'student':
+                self.student_features.append(output)
+            if type == 'teacher':
+                self.teacher_features.append(output)
 
 class DistillationLoss(nn.Module):
     """
@@ -126,8 +126,10 @@ class DistillationLoss(nn.Module):
         return sd_loss
 
 class Adaptor(nn.Module):
-    def __init__(self,input_size,output_size):
+    def __init__(self,input_size,output_size,total_dim):
         super().__init__()
+        self.total_dim = total_dim
+
         # self.ff = nn.Sequential(
         #     nn.Conv1d(input_size,input_size, kernel_size=1, stride=1, padding=0),
         #     nn.GELU(),
@@ -135,92 +137,74 @@ class Adaptor(nn.Module):
         #     nn.GELU(),
         #     nn.Conv1d(output_size,output_size, kernel_size=1, stride=1, padding=0),
         # )
-        # self.ff = nn.Conv1d(input_size,output_size, kernel_size=1, stride=1, padding=0)
+        if total_dim == 3:
+            self.ff = nn.Conv1d(input_size,output_size, kernel_size=1, stride=1, padding=0)
+        elif total_dim == 4:
+            self.ff = nn.Conv2d(input_size,output_size, kernel_size=1, stride=1, padding=0)
     def forward(self,x):
-        # return self.ff(x)
+        if self.total_dim == 2:
+            x = x
+        elif self.total_dim == 3:
+            x = x.permute(0,2,1)
+            x = self.ff(x)
+            x = x.permute(0,2,1)
+        elif self.total_dim == 4:
+            x = self.ff(x)
+        else:
+            raise ValueError('wrong total_dim')
         return x
 
 class DistillationLoss_(nn.Module):
-    def __init__(self, s_cfg, t_cfg,s_shapes,t_shapes,distillation,layers):
+    def __init__(self,distillation):
         super().__init__()
-        self.kd_loss = CriterionKDMSE()
+        self.kd_loss = CriterionChannelAwareLoss()
 
         self.adaptors = nn.ModuleList()
-        
-        self.s_norms = nn.ModuleList()
-        self.t_norms = nn.ModuleList()
 
-        for i in range(len(s_shapes)):
-            s_shape = s_shapes[i]
-            t_shape = t_shapes[i]
+        layers = distillation['layers']
+        for _,_,channel_dim,total_dim in layers:
+            student_dim,teacher_dim = channel_dim
+            self.adaptors.append(Adaptor(student_dim,teacher_dim,total_dim))
+            print(f'add an adaptor of shape {student_dim} to {teacher_dim}')
 
-            self.s_norms.append(nn.BatchNorm1d(t_shape))
-            self.t_norms.append(nn.BatchNorm1d(t_shape))
-
-            if s_shape  == t_shape:
-                self.adaptors.append(None)
-            else:
-                self.adaptors.append(Adaptor(s_shape,t_shape))
-
-        self.layers = layers
+        self.layers = [student_name for student_name,_,_,_ in layers]
         
         # add gradients to weight of each layer's loss
         self.strategy = distillation['weights_init_strategy']
         if self.strategy=='equal':
-            weights = [1e6,1e6,1e5,1e5,1e4,1e4,1e3,1e3]
+            # weights = [1e8,1e7,1e6,1e4,1e3]
+            weights = [1]
+            # weights = [1,1,1,1,1,1]
             weights = nn.Parameter(torch.Tensor(weights),requires_grad=False)
             self.weights = weights
-        elif self.strategy=='weight_average':
-            self.sd_weight = nn.Parameter(torch.Tensor([0.8]),requires_grad=True)
         elif self.strategy=='self_adjust':
-            weights_1 = [1e8,1e8,1e6,1e6,1e6,1e3,1e3,1e3,1,1]
-            weights_1 = nn.Parameter(torch.Tensor(weights_1),requires_grad=False)
-            self.weights_1 = weights_1
-
-            weights_2 = nn.Parameter(torch.Tensor([2.71 for i in range(10)]),requires_grad=True)
-            self.weights_2 = weights_2
+            weights = nn.Parameter(torch.Tensor([1 for i in range(3)]),requires_grad=True)
+            self.weights = weights
         else:
             raise ValueError('Wrong weights init strategy')
 
     def forward(self, soft, pred, losses):
-        if self.strategy=='self_adjust':
-            ws = F.softmax(1/(torch.log(self.weights_2))**2)
         for i in range(len(pred)):
             adaptor=self.adaptors[i]
-            pred[i] = pred[i].permute(0,2,1)
-            soft[i] = soft[i].permute(0,2,1)
-
-            if adaptor is None:
-                pred[i] = pred[i]
-            else:
-                pred[i] = adaptor(pred[i])
-            
-            pred[i] = self.s_norms[i](pred[i])
-            soft[i] = self.t_norms[i](soft[i])
-            
-            pred[i] = pred[i].permute(0,2,1)
-            soft[i] = soft[i].permute(0,2,1)
-
-            maxpool = nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0,
-                                    ceil_mode=True)
+            pred[i] = adaptor(pred[i])
 
             if self.strategy=='equal':
-                loss = self.weights[i]*self.kd_loss(maxpool(pred[i]), maxpool(soft[i]))
+                loss = self.weights[i]*self.kd_loss(pred[i], soft[i])
                 name = self.layers[i]
                 losses.update({'loss_'+name: loss})
             elif self.strategy=='self_adjust':
-                loss = self.weights_1[i]*ws[i]*\
-                        self.kd_loss(maxpool(pred[i]), maxpool(soft[i]))\
-                        +torch.log(self.weights_2[i])
+                loss = (1/(self.weights[0]**2))*\
+                        self.kd_loss(pred[i], soft[i])\
+                        +torch.log(self.weights[0])
                 name = self.layers[i]
                 losses.update({'loss_'+name: loss})
-                losses.update({'weight_'+name: self.weights_2[i]})
+                losses.update({'weight_'+name: self.weights[0]})
         if self.strategy=='equal':
             pass
         elif self.strategy=='self_adjust':
-            losses['decode.loss_seg'] = ws[8]*losses['decode.loss_seg']+torch.log(self.weights_2[8])
-            losses['aux.loss_seg'] = ws[9]*losses['decode.loss_seg']+torch.log(self.weights_2[9])
+            losses['decode.loss_seg'] =(1/(self.weights[1]**2))*losses['decode.loss_seg']+torch.log(self.weights[1])
+            losses['aux.loss_seg'] = (1/(self.weights[2]**2))*losses['aux.loss_seg']+torch.log(self.weights[2])
 
-            losses.update({'weight_'+'decode.loss_seg': self.weights_2[8]})
-            losses.update({'weight_'+'aux.loss_seg': self.weights_2[9]})
+            losses.update({'weight_'+'decode.loss_seg': self.weights[1]})
+            losses.update({'weight_'+'aux.loss_seg': self.weights[2]})
         return losses
