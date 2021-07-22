@@ -16,4 +16,4 @@ class OptimizerHookGrad(OptimizerHook):
                 runner.log_buffer.update({'grad_norm': float(grad_norm)},
                                          runner.outputs['num_samples'])
         runner.optimizer.step()
-        
+        runner.optimizer.zero_grad()

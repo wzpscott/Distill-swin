@@ -110,7 +110,7 @@ def train_segmentor(model,
             dist=distributed,
             shuffle=False)
         eval_cfg = cfg.get('evaluation', {})
-        eval_cfg['by_epoch'] = cfg.runner['type'] != 'IterBasedRunner'
+        eval_cfg['by_epoch'] = ('Iter' not in cfg.runner['type'] )
         eval_hook = DistEvalHook if distributed else EvalHook
         runner.register_hook(eval_hook(val_dataloader, **eval_cfg))
 
