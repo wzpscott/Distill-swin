@@ -720,7 +720,7 @@ class SDModule_(BaseSegmentor):
         
         return log_vars,self.distillation.parse_mode
 
-    def train_step(self, data_batch, optimizer, loss_name='all', **kwargs):
+    def train_step(self, data_batch, optimizer, loss_name='all',backward=True, **kwargs):
         losses = self(**data_batch)
         log_vars,parse_mode = self._parse_losses(losses)
 
@@ -728,11 +728,14 @@ class SDModule_(BaseSegmentor):
             log_vars=log_vars,
             parse_mode=parse_mode,
             num_samples=len(data_batch['img'].data))
-        
-        # self.set_grad(outputs)
-        if loss_name == 'all':
-            loss = sum(_value for _key, _value in losses.items()
-                        if 'loss' in _key)
+
+        if backward:
+            if loss_name == 'all':
+                loss = sum(_value for _key, _value in losses.items()
+                            if 'loss' in _key)
+            elif isinstance(loss_name,list):
+                loss = sum(_value for _key, _value in losses.items()
+                            if ('loss' in _key and _key in loss_name))
             loss.backward()
             for loss_name, loss_value in outputs['log_vars'].items():
             # reduce loss when distributed training
@@ -743,8 +746,9 @@ class SDModule_(BaseSegmentor):
                     log_vars[loss_name] = loss_value.item()
             return outputs
         else:
+            assert not isinstance(loss_name,list)
             loss = losses[loss_name]
-            loss.backward(retain_graph=True)
+            loss.backward()
 
             grads = {}
             for name,param in self.student.named_parameters():
@@ -754,12 +758,7 @@ class SDModule_(BaseSegmentor):
                     grads[name] = param.grad
                 self.student.zero_grad()
 
-            if dist.is_available() and dist.is_initialized():
-                loss_value = loss.data.clone()
-                dist.all_reduce(loss_value.div_(dist.get_world_size()))
-
-                loss_value = loss_value.item()
-            return loss_value,grads
+            return grads
         # -----------------------------------------------------
         
 

@@ -225,8 +225,8 @@ lr_config = dict(
     power=1.0,
     min_lr=0.0,
     by_epoch=False)
-runner = dict(type='IterBasedRunner', max_iters=40000)
+runner = dict(type='IterBasedRunnerGrad', max_iters=40000)
 checkpoint_config = dict(by_epoch=False, interval=4000)
 evaluation = dict(interval=2000, metric='mIoU')
-work_dir = './results/SCKD_2*7_test'
+work_dir = './results/SCKD_2*2_test'
 gpu_ids = range(0, 1)

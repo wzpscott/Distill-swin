@@ -3,7 +3,9 @@ import warnings
 
 import numpy as np
 import torch
-from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
+# from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
+from mmcv.parallel import MMDataParallel
+from mmcv_custom import MMDistributedDataParallel
 from mmcv.runner import build_optimizer, build_runner
 
 from mmseg.core import DistEvalHook, EvalHook
@@ -74,7 +76,7 @@ def train_segmentor(model,
 
 
     if cfg.get('runner') is None:
-        cfg.runner = {'type': 'IterBasedRunner', 'max_iters': cfg.total_iters}
+        cfg.runner = {'type': 'IterBasedRunnerGrad', 'max_iters': cfg.total_iters}
         warnings.warn(
             'config is now expected to have a `runner` section, '
             'please set `runner` in your config.', UserWarning)
@@ -90,6 +92,7 @@ def train_segmentor(model,
             meta=meta))
 
     # register hooks
+    cfg.optimizer_config['type'] = 'OptimizerHookGrad'
     runner.register_training_hooks(cfg.lr_config, cfg.optimizer_config,
                                    cfg.checkpoint_config, cfg.log_config,
                                    cfg.get('momentum_config', None))

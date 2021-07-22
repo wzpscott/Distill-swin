@@ -10,7 +10,7 @@ log_config = dict(
         dict(type='TensorboardLoggerHook') 
         # dict(type='TextLoggerHook')
     ])
-work_dir = './results/SCKD_2*7_test'
+work_dir = './results/SCKD_2*2_test'
 
 model = dict(
         distillation = dict(
@@ -35,3 +35,4 @@ lr_config = dict(_delete_=True, policy='poly',
 data = dict(samples_per_gpu=2)
 evaluation = dict(interval=2000, metric='mIoU')  
 
+runner = dict(type='IterBasedRunnerGrad', max_iters=40000)
