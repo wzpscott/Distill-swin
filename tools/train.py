@@ -14,7 +14,7 @@ from mmseg.apis import set_random_seed, train_segmentor
 from mmseg.datasets import build_dataset
 from mmseg.models import build_segmentor
 from mmseg.utils import collect_env, get_root_logger
-
+import deepspeed
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a segmentor')
@@ -53,9 +53,14 @@ def parse_args():
         default='none',
         help='job launcher')
     parser.add_argument('--local_rank', type=int, default=0)
+    #-------------------------
+    parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
+    # args = parser.parse_args()
+    #-------------------------
     if 'LOCAL_RANK' not in os.environ:
         os.environ['LOCAL_RANK'] = str(args.local_rank)
+
 
     return args
 
@@ -92,7 +97,9 @@ def main():
         distributed = False
     else:
         distributed = True
+        # ----------------------------------
         init_dist(args.launcher, **cfg.dist_params)
+        # ----------------------------------
 
     # create work_dir
     mmcv.mkdir_or_exist(osp.abspath(cfg.work_dir))
@@ -153,6 +160,7 @@ def main():
         model,
         datasets,
         cfg,
+        args,
         distributed=distributed,
         validate=(not args.no_validate),
         timestamp=timestamp,

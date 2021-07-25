@@ -34,6 +34,7 @@ def set_random_seed(seed, deterministic=False):
 def train_segmentor(model,
                     dataset,
                     cfg,
+                    args,
                     distributed=False,
                     validate=False,
                     timestamp=None,
@@ -57,7 +58,13 @@ def train_segmentor(model,
 
 
     # put model on gpus
-    if distributed:
+    use_deepspeed = True
+    if use_deepspeed:
+        from mmcv_custom.DDP import MMinitialize
+        parameters = filter(lambda p: p.requires_grad, model.parameters())
+        model, optimizer, trainloader, _ = MMinitialize(
+            args=args, model=model, model_parameters=parameters,training_data=dataset[0])
+    elif distributed:
         find_unused_parameters = cfg.get('find_unused_parameters', False)
         # Sets the `find_unused_parameters` parameter in
         # torch.nn.parallel.DistributedDataParallel
@@ -66,13 +73,14 @@ def train_segmentor(model,
             device_ids=[torch.cuda.current_device()],
             broadcast_buffers=False,
             find_unused_parameters=find_unused_parameters)
+        optimizer = build_optimizer(model, cfg.optimizer)
     else:
         model = MMDataParallel(
             model.cuda(cfg.gpu_ids[0]), device_ids=cfg.gpu_ids)
+        optimizer = build_optimizer(model, cfg.optimizer)
 
     # build runner
-    optimizer = build_optimizer(model, cfg.optimizer)
-    # optimizer = Adam(model.parameters())
+    # optimizer = build_optimizer(model, cfg.optimizer)
 
 
     if cfg.get('runner') is None:
