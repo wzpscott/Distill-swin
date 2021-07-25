@@ -5,12 +5,12 @@ _base_ = [
     '../_base_/schedules/schedule_40k.py'
 ]
 log_config = dict(  
-    interval=50, 
+    interval=10, 
     hooks=[
         dict(type='TensorboardLoggerHook') 
         # dict(type='TextLoggerHook')
     ])
-work_dir = './results/SCKD_2*2_test'
+work_dir = './test_results/test1'
 
 model = dict(
         distillation = dict(
@@ -32,7 +32,7 @@ lr_config = dict(_delete_=True, policy='poly',
                  warmup_ratio=1e-6,
                  power=1.0, min_lr=0.0, by_epoch=False)
 
-data = dict(samples_per_gpu=2)
-evaluation = dict(interval=2000, metric='mIoU')  
+data = dict(samples_per_gpu=2,workers_per_gpu=0)
+evaluation = dict(interval=1, metric='mIoU')  
 
 runner = dict(type='IterBasedRunnerGrad', max_iters=40000)

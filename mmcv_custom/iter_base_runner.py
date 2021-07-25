@@ -52,8 +52,11 @@ class IterBasedRunnerGrad(BaseRunner):
         self.data_loader = data_loader
         self._epoch = data_loader.epoch
         data_batch = next(data_loader)
-        self.call_hook('before_train_iter')
+        data_batch['img'] = data_batch['img'].data[0].cuda()
+        data_batch['gt_semantic_seg'] = data_batch['gt_semantic_seg'].data[0].cuda()
 
+        self.call_hook('before_train_iter')
+        
         if parse_mode == 'regular':
             outputs = self.model.train_step(\
                 data_batch, self.optimizer, loss_name = 'all',backward=True,**kwargs)
@@ -92,6 +95,9 @@ class IterBasedRunnerGrad(BaseRunner):
         self.mode = 'val'
         self.data_loader = data_loader
         data_batch = next(data_loader)
+        data_batch['img'] = data_batch['img'].data[0].cuda()
+        data_batch['gt_semantic_seg'] = data_batch['gt_semantic_seg'].data[0].cuda()
+
         self.call_hook('before_val_iter')
         outputs = self.model.val_step(data_batch, **kwargs)
         if not isinstance(outputs, dict):

@@ -656,6 +656,7 @@ class SDModule_(BaseSegmentor):
                 self.v[k][name] = torch.zeros(param.shape).cuda()
 
     def forward_train(self, img, img_metas, gt_semantic_seg):
+
         loss_dict = self.student(img, img_metas, return_loss=True, gt_semantic_seg=gt_semantic_seg)
         with torch.no_grad():
             _ = self.teacher(img, img_metas, return_loss=True, gt_semantic_seg=gt_semantic_seg)
@@ -796,6 +797,7 @@ class SDModule_(BaseSegmentor):
         if mode == 'regular':
             loss = sum(_value for _key, _value in losses.items()
                     if 'loss' in _key)
+            loss.backward(retain_graph=True)
             loss.backward()
         elif mode == 'PCGrad':
             g = {}
@@ -1202,7 +1204,7 @@ class SDModule_(BaseSegmentor):
 
     def simple_test(self, img, img_meta, rescale=True):
         """Simple test with single image."""
-        seg_logit = self.inference(img, img_meta, rescale)
+        seg_logit = self.inference(img.cuda(), img_meta, rescale)
         seg_pred = seg_logit.argmax(dim=1)
         seg_pred = seg_pred.cpu().numpy()
         # unravel batch dim
@@ -1227,3 +1229,39 @@ class SDModule_(BaseSegmentor):
         # unravel batch dim
         seg_pred = list(seg_pred)
         return seg_pred
+    def forward_test(self, imgs, img_metas, **kwargs):
+        """
+        Args:
+            imgs (List[Tensor]): the outer list indicates test-time
+                augmentations and inner Tensor should have a shape NxCxHxW,
+                which contains all images in the batch.
+            img_metas (List[List[dict]]): the outer list indicates test-time
+                augs (multiscale, flip, etc.) and the inner list indicates
+                images in a batch.
+        """
+        for var, name in [(imgs, 'imgs'), (img_metas, 'img_metas')]:
+            if not isinstance(var, list):
+                raise TypeError(f'{name} must be a list, but got '
+                                f'{type(var)}')
+
+        num_augs = len(imgs)
+        if num_augs != len(img_metas):
+            raise ValueError(f'num of augmentations ({len(imgs)}) != '
+                             f'num of image meta ({len(img_metas)})')
+        # all images in the same aug batch all of the same ori_shape and pad
+        # shape
+
+        for img_meta in img_metas:
+            ori_shapes = [_['ori_shape'] for _ in img_meta]
+            assert all(shape == ori_shapes[0] for shape in ori_shapes)
+            img_shapes = [_['img_shape'] for _ in img_meta]
+            assert all(shape == img_shapes[0] for shape in img_shapes)
+            pad_shapes = [_['pad_shape'] for _ in img_meta]
+            assert all(shape == pad_shapes[0] for shape in pad_shapes)
+
+        if num_augs == 1:
+            # return self.simple_test(imgs[0], img_metas[0], **kwargs)
+            # print(img_metas[0])
+            return self.simple_test(imgs[0], img_metas[0], **kwargs)
+        else:
+            return self.aug_test(imgs, img_metas, **kwargs)

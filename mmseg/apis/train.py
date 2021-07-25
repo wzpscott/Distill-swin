@@ -44,6 +44,18 @@ def train_segmentor(model,
 
     # prepare data loaders
     dataset = dataset if isinstance(dataset, (list, tuple)) else [dataset]
+
+    # data_loaders = [
+    #     build_dataloader(
+    #         ds,
+    #         cfg.data.samples_per_gpu,
+    #         cfg.data.workers_per_gpu,
+    #         # cfg.gpus will be ignored if distributed
+    #         len(cfg.gpu_ids),
+    #         dist=distributed,
+    #         seed=cfg.seed,
+    #         drop_last=True) for ds in dataset
+    # ]
     data_loaders = [
         build_dataloader(
             ds,
@@ -51,19 +63,19 @@ def train_segmentor(model,
             cfg.data.workers_per_gpu,
             # cfg.gpus will be ignored if distributed
             len(cfg.gpu_ids),
-            dist=distributed,
+            dist=True,
             seed=cfg.seed,
             drop_last=True) for ds in dataset
     ]
-
+ 
 
     # put model on gpus
     use_deepspeed = True
     if use_deepspeed:
         from mmcv_custom.DDP import MMinitialize
         parameters = filter(lambda p: p.requires_grad, model.parameters())
-        model, optimizer, trainloader, _ = MMinitialize(
-            args=args, model=model, model_parameters=parameters,training_data=dataset[0])
+        model, optimizer, _ , _ = MMinitialize(
+            args=args, model=model.cuda(), model_parameters=parameters)
     elif distributed:
         find_unused_parameters = cfg.get('find_unused_parameters', False)
         # Sets the `find_unused_parameters` parameter in
@@ -111,6 +123,7 @@ def train_segmentor(model,
     # register eval hooks
     if validate:
         val_dataset = build_dataset(cfg.data.val, dict(test_mode=True))
+        distributed = True
         val_dataloader = build_dataloader(
             val_dataset,
             samples_per_gpu=1,

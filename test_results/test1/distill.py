@@ -140,7 +140,7 @@ test_pipeline = [
 ]
 data = dict(
     samples_per_gpu=2,
-    workers_per_gpu=3,
+    workers_per_gpu=0,
     train=dict(
         type='ADE20KDataset',
         data_root='data/ade/ADEChallengeData2016',
@@ -208,7 +208,7 @@ data = dict(
                     dict(type='Collect', keys=['img'])
                 ])
         ]))
-log_config = dict(interval=1, hooks=[dict(type='TextLoggerHook')])
+log_config = dict(interval=10, hooks=[dict(type='TensorboardLoggerHook')])
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
 load_from = None
@@ -227,6 +227,6 @@ lr_config = dict(
     by_epoch=False)
 runner = dict(type='IterBasedRunnerGrad', max_iters=40000)
 checkpoint_config = dict(by_epoch=False, interval=4000)
-evaluation = dict(interval=2000, metric='mIoU')
-work_dir = './results/SCKD_2*2_test'
+evaluation = dict(interval=1, metric='mIoU')
+work_dir = './test_results/test1'
 gpu_ids = range(0, 2)
