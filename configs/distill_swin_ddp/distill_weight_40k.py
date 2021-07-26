@@ -10,14 +10,14 @@ log_config = dict(
         dict(type='TensorboardLoggerHook') 
         # dict(type='TextLoggerHook')
     ])
-work_dir = './ddp_results/ca'
+work_dir = './ddp_results/weight_40k'
 
 model = dict(
         distillation = dict(
         layers=[
             ['decode_head.conv_seg','decode_head.conv_seg',[150,150],2],
         ],
-        weights_init_strategy='equal',
+        weights_init_strategy='self_adjust',
         parse_mode='regular',
     ),
     s_pretrain = './checkpoints/swin_tiny_patch4_window7_224.pth',
@@ -32,7 +32,7 @@ lr_config = dict(_delete_=True, policy='poly',
                  warmup_ratio=1e-6,
                  power=1.0, min_lr=0.0, by_epoch=False)
 
-data = dict(samples_per_gpu=4)
+data = dict(samples_per_gpu=2)
 evaluation = dict(interval=2000, metric='mIoU')  
 
 runner = dict(type='IterBasedRunnerGrad', max_iters=40000)
