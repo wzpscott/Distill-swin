@@ -56,37 +56,17 @@ class IterBasedRunnerGrad(BaseRunner):
         data_batch['gt_semantic_seg'] = data_batch['gt_semantic_seg'].data[0].cuda()
 
         self.call_hook('before_train_iter')
-        
-        if parse_mode == 'regular':
-            outputs = self.model.train_step(\
-                data_batch, self.optimizer, loss_name = 'all',backward=True,**kwargs)
-            if not isinstance(outputs, dict):
-                raise TypeError('model.train_step() must return a dict')
-            if 'log_vars' in outputs:
-                self.log_buffer.update(outputs['log_vars'], outputs['num_samples'])
-            self.outputs = outputs
-            self.call_hook('after_train_iter')    
-        elif parse_mode == 'SCKD':
-            decode_grad = self.model.train_step(\
-                data_batch, self.optimizer, loss_name = 'decode.loss_seg',backward=False,**kwargs)
-            aux_grad = self.model.train_step(\
-                data_batch, self.optimizer, loss_name = 'aux.loss_seg',backward=False,**kwargs)
-            soft_grad = self.model.train_step(\
-                data_batch, self.optimizer, loss_name = 'loss_decode_head.conv_seg',backward=False,**kwargs)
-            loss_name = ['decode.loss_seg']
-            if flatten_grads(decode_grad)@flatten_grads(aux_grad) > 0:
-                loss_name.append('aux.loss_seg')
-            if flatten_grads(decode_grad)@flatten_grads(soft_grad) > 0:
-                loss_name.append('loss_decode_head.conv_seg')
-            
-            outputs = self.model.train_step(\
-                data_batch, self.optimizer, loss_name = loss_name,backward=True,**kwargs)
-            if not isinstance(outputs, dict):
-                raise TypeError('model.train_step() must return a dict')
-            if 'log_vars' in outputs:
-                self.log_buffer.update(outputs['log_vars'], outputs['num_samples'])
-            self.outputs = outputs
-            self.call_hook('after_train_iter') 
+
+        outputs = self.model.train_step(\
+            data_batch, self.optimizer, loss_name = 'all',backward=True,**kwargs)
+        if not isinstance(outputs, dict):
+            raise TypeError('model.train_step() must return a dict')
+        if 'log_vars' in outputs:
+            self.log_buffer.update(outputs['log_vars'], outputs['num_samples'])
+
+        self.outputs = outputs
+
+        self.call_hook('after_train_iter')    
         self._inner_iter += 1
         self._iter += 1
 

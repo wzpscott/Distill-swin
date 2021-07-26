@@ -97,16 +97,11 @@ class DistEvalHook(EvalHook):
             return
         from mmseg.apis import multi_gpu_test
         runner.log_buffer.clear()
-        # results = multi_gpu_test(
-        #     runner.model,
-        #     self.dataloader,
-        #     tmpdir=osp.join(runner.work_dir, '.eval_hook'),
-        #     gpu_collect=self.gpu_collect)
         results = multi_gpu_test(
             runner.model,
             self.dataloader,
             tmpdir=osp.join(runner.work_dir, '.eval_hook'),
-            gpu_collect=False)
+            gpu_collect=self.gpu_collect)
         if runner.rank == 0:
             print('\n')
             self.evaluate(runner, results)

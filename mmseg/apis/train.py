@@ -35,7 +35,7 @@ def train_segmentor(model,
                     dataset,
                     cfg,
                     args,
-                    distributed=False,
+                    distributed=True,
                     validate=False,
                     timestamp=None,
                     meta=None):
@@ -45,17 +45,6 @@ def train_segmentor(model,
     # prepare data loaders
     dataset = dataset if isinstance(dataset, (list, tuple)) else [dataset]
 
-    # data_loaders = [
-    #     build_dataloader(
-    #         ds,
-    #         cfg.data.samples_per_gpu,
-    #         cfg.data.workers_per_gpu,
-    #         # cfg.gpus will be ignored if distributed
-    #         len(cfg.gpu_ids),
-    #         dist=distributed,
-    #         seed=cfg.seed,
-    #         drop_last=True) for ds in dataset
-    # ]
     data_loaders = [
         build_dataloader(
             ds,
@@ -63,7 +52,7 @@ def train_segmentor(model,
             cfg.data.workers_per_gpu,
             # cfg.gpus will be ignored if distributed
             len(cfg.gpu_ids),
-            dist=True,
+            dist=distributed,
             seed=cfg.seed,
             drop_last=True) for ds in dataset
     ]
