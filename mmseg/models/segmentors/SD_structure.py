@@ -795,7 +795,6 @@ class SDModule_(BaseSegmentor):
                         g[loss_name][name] = copy.deepcopy(param.grad)
                     g_pc[loss_name][name] = g[loss_name][name]
                 self.student.zero_grad()
-                break
 
             for i in range(len(loss_names)):
                 loss_i = loss_names[i]
@@ -864,38 +863,29 @@ class SDModule_(BaseSegmentor):
                 for loss_name in g_pc:
                     param.grad += g_pc[loss_name][name]
         elif mode == 'SCKD':
-            loss_names = [k for k in losses]
-
-            decode_grads = torch.Tensor([]).cuda()
-            decode_loss = losses['decode.loss_seg']
-            decode_loss.backward(retain_graph=True)
-            
-            for name,param in self.student.named_parameters():
-                if param.grad is None:
-                    decode_grads = torch.cat([decode_grads,torch.zeros(param.shape).flatten().cuda()])
-                else:
-                    decode_grads = torch.cat([decode_grads,param.grad.flatten()])
-            self.student.zero_grad()
-
-            survive_losses = {}
-            for loss_name in loss_names:
-                if loss_name == 'decode.loss_seg' or 'loss' not in loss_name:
-                    continue
+            g = {}
+            for i,loss_name in enumerate(loss_names):
                 loss = losses[loss_name]
                 loss.backward(retain_graph=True)
-                loss_grads = torch.Tensor([]).cuda()
 
+                g[loss_name] = {}
                 for name,param in self.student.named_parameters():
                     if param.grad is None:
-                        loss_grads = torch.cat([loss_grads,torch.zeros(param.shape).flatten().cuda()])
+                        g[loss_name][name] = torch.zeros(param.shape).cuda()
                     else:
-                        loss_grads = torch.cat([loss_grads,param.grad.flatten()])
-                if torch.sum(loss_grads * decode_grads) > 0:
-                    survive_losses[loss_name] = loss
+                        g[loss_name][name] = copy.deepcopy(param.grad)
+                if 'decode' not in loss_name:
+                    self.student.zero_grad()
 
-            loss = sum([v for k,v in survive_losses.items() if 'loss' in loss_name])
-            loss += losses['decode.loss_seg']
-            loss.backward()  
+            for loss_name in g:
+                if 'decode' in loss_name:
+                    continue
+                cos = torch.sum(self.flat_grad(g[loss_name])*self.flat_grad(g['decode.loss_seg']))
+                if cos <= 0:
+                    continue
+                for name,param in self.student.named_parameters():
+                    param.grad += g[loss_name][name]
+            print(1)
         elif mode == 'SCKD_param' :
             decode_grads = {}
             decode_loss = losses['decode.loss_seg']

@@ -32,7 +32,7 @@ lr_config = dict(_delete_=True, policy='poly',
                  warmup_ratio=1e-6,
                  power=1.0, min_lr=0.0, by_epoch=False)
 
-data = dict(samples_per_gpu=2)
+data = dict(samples_per_gpu=2,workers_per_gpu=0)
 evaluation = dict(interval=2000, metric='mIoU')  
 
 runner = dict(type='IterBasedRunnerGrad', max_iters=40000)

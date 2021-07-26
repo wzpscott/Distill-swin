@@ -10,7 +10,7 @@ log_config = dict(
         dict(type='TensorboardLoggerHook') 
         # dict(type='TextLoggerHook')
     ])
-work_dir = './ddp_results/ca_40k'
+work_dir = './ddp_results/baseline_160k'
 
 model = dict(
         distillation = dict(
