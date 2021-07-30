@@ -92,7 +92,23 @@ def main():
         distributed = False
     else:
         distributed = True
-        init_dist(args.launcher, **cfg.dist_params)
+        # init_dist(args.launcher, **cfg.dist_params)
+        retries = 100
+        while True:
+            try:
+                import torch.distributed as dist
+                print(cfg.dist_params)
+                dist.init_process_group(backend='nccl')
+                print(os.environ['MASTER_PORT'], 'work')
+                break
+            except RuntimeError:
+                # port is taken; we increment the port and try again
+                if retries <= 0:
+                    raise ValueError('all port is taken')
+                retries -= 1
+                import random
+                print(os.environ['MASTER_PORT'], 'invalid')
+                os.environ['MASTER_PORT'] = str(random.randint(10000, 50000))
 
     # create work_dir
     mmcv.mkdir_or_exist(osp.abspath(cfg.work_dir))

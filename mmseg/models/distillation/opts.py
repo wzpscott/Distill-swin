@@ -30,7 +30,7 @@ class FeatureExtractor(nn.Module):
 
 
 class Extractor(nn.Module):
-    def __init__(self, teacher, student, layers):
+    def __init__(self, student, teacher, layers):
         super().__init__()
 
         self.teacher_features = []
@@ -38,13 +38,16 @@ class Extractor(nn.Module):
         self.channel_dims = []  # student 和 teacher 被提取层的输出通道数
         self.total_dims = []  # student 和 teacher 被提取层的输出维数
 
-        for student_layer,teacher_layer,channel_dim,total_dim in layers:
+        for i,(student_layer,teacher_layer,channel_dim,total_dim) in enumerate(layers):
             self.channel_dims.append(channel_dim)
             self.total_dims.append(total_dim)
 
+            if not isinstance(teacher_layer,list):
+                teacher_layer = [teacher_layer]
+
             for name, module in teacher.named_modules():
-                if name == teacher_layer:
-                    module.register_forward_hook(partial(self.hook_fn_forward, name=name, type='teacher'))
+                if name in teacher_layer:
+                    module.register_forward_hook(partial(self.hook_fn_forward, name=name, type='teacher',layer_num=i))
                     print(f'teacher_layer :{teacher_layer} hooked!!!!')
 
             for name, module in student.named_modules():
@@ -53,12 +56,15 @@ class Extractor(nn.Module):
                     print(f'student_layer :{student_layer} hooked!!!!')
 
 
-    def hook_fn_forward(self, module, input, output, name, type):
+    def hook_fn_forward(self, module, input, output, name, type,layer_num=None):
         if self.training == True:
             if type == 'student':
                 self.student_features.append(output)
             if type == 'teacher':
-                self.teacher_features.append(output)
+                if len(self.teacher_features)>layer_num:
+                    self.teacher_features[layer_num].append(output)
+                else:
+                    self.teacher_features.append([output])
 
 class DistillationLoss(nn.Module):
     """
@@ -125,6 +131,47 @@ class DistillationLoss(nn.Module):
         
         return sd_loss
 
+class AttnAdaptor(nn.Module):
+    def __init__(self,input_size,output_size,teacher_num):
+        super().__init__()
+        Ws = nn.ModuleList()
+        for _ in range(teacher_num):
+            # Ws.append(nn.Conv1d(input_size, output_size,kernel_size=1, stride=1, padding=0))
+            Ws.append(nn.Linear(input_size,output_size))
+        self.Ws = Ws
+
+        # self.W = nn.Conv1d(input_size, output_size,kernel_size=1, stride=1, padding=0)
+        self.W = nn.Linear(input_size,output_size)
+    def forward(self,x_student,x_teachers):
+        # x_student:[b,WH,C_s]
+        # x_teachers:List of tensor([b,WH,C_t])
+        T = 1
+        b,WH,C = x_teachers[0].shape
+
+        x_students = []
+        for i,x_teacher in enumerate(x_teachers):
+            # x_student_ = x_student.permute(0,2,1)
+            # x_student_ = self.Ws[i](x_student_)
+            # x_student_ = x_student_.permute(0,2,1)
+            x_student_ = self.Ws[i](x_student)
+            x_students.append(x_student_)
+
+        x_students = torch.stack(x_students,dim=0) # x_teachers:[teacher_num,b,WH,C_t]
+        x_teachers = torch.stack(x_teachers,dim=0) # x_teachers:[teacher_num.b,WH,C_t]
+
+        x_teachers_ = x_teachers.reshape(-1,b*WH*C) # x_teachers:[teacher_num,b*WH*C]
+        x_students_ = x_students.reshape(-1,b*WH*C)# x_student:[teacher_num,b*WH*C]
+
+        attn = torch.sum(x_teachers_*x_students_/(b*WH*C),dim=1) 
+        attn = F.softmax(attn/T) # [teacher_num]
+
+        x_teachers = torch.mul(x_teachers, attn.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)).sum(dim=0)
+        
+        # x_student = x_student.permute(0,2,1)
+        x_student = self.W(x_student)
+        # x_student = x_student.permute(0,2,1)
+
+        return x_student,x_teachers,attn
 class Adaptor(nn.Module):
     def __init__(self,input_size,output_size,total_dim):
         super().__init__()
@@ -157,14 +204,19 @@ class Adaptor(nn.Module):
 class DistillationLoss_(nn.Module):
     def __init__(self,distillation):
         super().__init__()
-        self.kd_loss = CriterionChannelAwareLoss()
+        self.kd_loss = CriterionChannelAwareLoss2D()
 
         self.adaptors = nn.ModuleList()
 
         layers = distillation['layers']
-        for _,_,channel_dim,total_dim in layers:
+        self.use_attn = distillation['use_attn']
+        for _,teacher_layers,channel_dim,_ in layers:
             student_dim,teacher_dim = channel_dim
-            self.adaptors.append(Adaptor(student_dim,teacher_dim,total_dim))
+            # self.adaptors.append(Adaptor(student_dim,teacher_dim,total_dim))
+            if self.use_attn:
+                self.adaptors.append(AttnAdaptor(student_dim,teacher_dim,len(teacher_layers)))
+            else:
+                self.adaptors.append(Adaptor(student_dim,teacher_dim,3))
             print(f'add an adaptor of shape {student_dim} to {teacher_dim}')
 
         self.layers = [student_name for student_name,_,_,_ in layers]
@@ -173,7 +225,7 @@ class DistillationLoss_(nn.Module):
         self.strategy = distillation['weights_init_strategy']
         if self.strategy=='equal':
             # weights = [1e8,1e7,1e6,1e4,1e3]
-            weights = [1]
+            weights = [0.1 for i in range(len(layers))]
             # weights = [1,1,1,1,1,1]
             weights = nn.Parameter(torch.Tensor(weights),requires_grad=False)
             self.weights = weights
@@ -186,7 +238,16 @@ class DistillationLoss_(nn.Module):
     def forward(self, soft, pred, losses):
         for i in range(len(pred)):
             adaptor=self.adaptors[i]
-            pred[i] = adaptor(pred[i])
+
+            if self.use_attn:
+                pred[i],soft[i],attn = adaptor(pred[i],soft[i])
+
+                for j in range(attn.shape[0]):
+                    losses.update({'attn'+str(i)+'layer'+str(j): attn[j].clone()})
+            else:
+                soft[i] = soft[i][0]
+                pred[i] = adaptor(pred[i])
+
 
             if self.strategy=='equal':
                 loss = self.weights[i]*self.kd_loss(pred[i], soft[i])
@@ -199,6 +260,8 @@ class DistillationLoss_(nn.Module):
                 name = self.layers[i]
                 losses.update({'loss_'+name: loss})
                 losses.update({'weight_'+name: self.weights[0]})
+            
+             
         if self.strategy=='equal':
             pass
         elif self.strategy=='self_adjust':

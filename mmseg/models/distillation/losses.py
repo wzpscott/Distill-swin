@@ -621,27 +621,21 @@ class CriterionChannelAwareLoss(nn.Module):
         logsoftmax = torch.nn.LogSoftmax(dim=1)
         loss = torch.sum( - softmax_pred_T * logsoftmax(preds_S.view(-1,W*H)/self.tau))
         return loss / (C * N)
-# class CriterionChannelAwareLoss(nn.Module):
-#     '''
-#     channel-aware fore/back-ground distillation loss
-#     '''
-#     def __init__(self, tau=1.0):
-#         super(CriterionChannelAwareLoss, self).__init__()
-#         self.fc = nn.Sequential(
-#             nn.Linear(384,512),
-#             nn.GELU(),
-#             nn.Linear(512,512),
-#         )
-#         self.tau = tau
 
-#     def forward(self, preds, soft):
-#     # def forward(self, preds_S, preds_T):
-#         preds_S, preds_T = preds, soft
-#         preds_S = self.fc(preds_S)
-#         assert preds_S.shape == preds_T.shape,'the input dim of preds_S and preds_T differ'
-#         N,WH,C = preds_S.shape
-#         softmax_pred_T = F.softmax(preds_T.view(-1,WH)/self.tau, dim=1)
-#         logsoftmax = torch.nn.LogSoftmax(dim=1)
-#         loss = torch.sum( - softmax_pred_T * logsoftmax(preds_S.view(-1,WH)/self.tau))
-#         return loss / (C * N)
+class CriterionChannelAwareLoss2D(nn.Module):
+    '''
+    channel-aware fore/back-ground distillation loss
+    '''
+    def __init__(self, tau=1.0):
+        super().__init__()
+        self.tau = tau
+
+    def forward(self, preds, soft):
+        preds_S, preds_T = preds, soft
+        assert preds_S.shape == preds_T.shape,'the input dim of preds_S and preds_T differ'
+        N,C,WH = preds_S.shape
+        softmax_pred_T = F.softmax(preds_T.reshape(-1,WH)/self.tau, dim=1)
+        logsoftmax = torch.nn.LogSoftmax(dim=1)
+        loss = torch.sum( - softmax_pred_T * logsoftmax(preds_S.reshape(-1,WH)/self.tau))
+        return loss / (C * N)
 
