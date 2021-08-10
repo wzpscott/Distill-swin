@@ -19,6 +19,7 @@ model = dict(
         ],
         weights_init_strategy='equal',
         parse_mode='regular',
+        use_attn=False,
     ),
     s_pretrain = './checkpoints/swin_tiny_patch4_window7_224.pth',
     t_pretrain = './checkpoints/upernet_swin_base_patch4_window7_512x512.pth',

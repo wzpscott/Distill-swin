@@ -37,7 +37,7 @@ class SDModule_(BaseSegmentor):
 
         self.features = Extractor(self.student,self.teacher,distillation.layers)
         
-        self.loss = DistillationLoss_(distillation = distillation)
+        self.loss = DistillationLoss_(distillation = distillation,tau=1)
         self.align_corners = False
         self.test_mode = 'whole'
 
